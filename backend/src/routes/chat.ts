@@ -145,7 +145,7 @@ chatRouter.post("/", async (c) => {
       });
       // Replace session messages with the full updated history
       // (appendResponseMessages returns the full array including prior messages)
-      const newMessages = updatedMessages.slice(allMessages.length);
+      const newMessages = updatedMessages.slice(allMessages.length) as UIMessage[];
       sessionService.appendMessages(sessionId, [latestUserMessage, ...newMessages]);
     },
   });
