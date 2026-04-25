@@ -2,11 +2,64 @@ import { motion } from 'motion/react';
 import { Package, Truck, CheckCircle2, ArrowLeft, MoreVertical, CreditCard, Wallet, RotateCcw } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
-import { useOrders } from '@/src/hooks/queries';
+import { useBackendOrders } from '@/src/hooks/queries';
+import type { Order } from '@/src/lib/backendClient';
+
+// ─── Display type ─────────────────────────────────────────────────────────────
+
+interface DisplayOrder {
+  id: string;
+  item: string;
+  status: string;
+  date: string;
+  cost: string;
+  type: string;
+  img: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const PLACEHOLDER_IMG = 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?q=80&w=300&auto=format&fit=crop';
+
+function mapStatus(status: Order['status']): string {
+  switch (status) {
+    case 'confirmed': return 'Delivered';
+    case 'pending':   return 'Processing';
+    default:          return 'Processing';
+  }
+}
+
+function formatDate(isoString: string): string {
+  try {
+    return new Date(isoString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+function toDisplayOrder(order: Order): DisplayOrder {
+  return {
+    id: `#${order.id.slice(0, 8).toUpperCase()}`,
+    item: order.items[0]?.productId ?? 'Order',
+    status: mapStatus(order.status),
+    date: formatDate(order.createdAt),
+    cost: `${order.totalMusd.toLocaleString()} MUSD`,
+    type: 'MUSD Purchase',
+    img: PLACEHOLDER_IMG,
+  };
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Orders() {
   const { navigate } = useAppNavigation();
-  const { data: orders = [], isLoading } = useOrders();
+  const { data: backendOrders = [], isLoading } = useBackendOrders();
+
+  const orders: DisplayOrder[] = backendOrders.map(toDisplayOrder);
 
   return (
     <div className="min-h-screen bg-mezo-bg font-sans selection:bg-mezo-rose/20">
@@ -24,7 +77,9 @@ export default function Orders() {
         <div className="flex gap-4">
           <div className="flex items-center gap-4 bg-white px-6 py-3 rounded-xl border border-mezo-ink/5 shadow-sm">
              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-             <span className="text-[9px] font-black uppercase tracking-widest text-mezo-ink">2 Shipments Active</span>
+             <span className="text-[9px] font-black uppercase tracking-widest text-mezo-ink">
+               {orders.filter(o => o.status === 'Processing').length} Active
+             </span>
           </div>
         </div>
       </header>
@@ -98,21 +153,21 @@ export default function Orders() {
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
                           <div className={cn("p-2 rounded-full", 
-                            order.status === 'In Transit' ? "bg-mezo-gold/10 text-mezo-gold" : "bg-green-100 text-green-600"
+                            order.status === 'Processing' ? "bg-mezo-gold/10 text-mezo-gold" : "bg-green-100 text-green-600"
                           )}>
-                            {order.status === 'In Transit' ? <Truck size={16} /> : <CheckCircle2 size={16} />}
+                            {order.status === 'Processing' ? <Truck size={16} /> : <CheckCircle2 size={16} />}
                           </div>
                           <span className="text-[10px] font-black uppercase tracking-widest text-mezo-ink">{order.status}</span>
                         </div>
-                        <span className="text-[9px] font-bold text-mezo-ink/40 uppercase tracking-widest italic">Estimated Arrival: Oct 18</span>
+                        <span className="text-[9px] font-bold text-mezo-ink/40 uppercase tracking-widest italic">{order.date}</span>
                       </div>
                       {/* Progress Bar */}
                       <div className="h-1.5 w-full bg-mezo-cream-dark rounded-full overflow-hidden">
                         <motion.div 
                           initial={{ width: 0 }}
-                          animate={{ width: order.status === 'In Transit' ? '65%' : '100%' }}
+                          animate={{ width: order.status === 'Processing' ? '35%' : '100%' }}
                           transition={{ duration: 1.5, ease: "circOut" }}
-                          className={cn("h-full rounded-full shadow-sm", order.status === 'In Transit' ? "bg-mezo-gold" : "bg-green-500")}
+                          className={cn("h-full rounded-full shadow-sm", order.status === 'Processing' ? "bg-mezo-gold" : "bg-green-500")}
                         ></motion.div>
                       </div>
                     </div>
@@ -151,8 +206,8 @@ export default function Orders() {
             <h5 className="text-[10px] font-black uppercase tracking-widest text-mezo-ink">Connected Capital</h5>
             <div className="space-y-4">
               {[
-                { icon: <Wallet size={16} />, name: "Phantom Wallet", detail: "0x72...91b0", color: "bg-purple-100 text-purple-600" },
-                { icon: <CreditCard size={16} />, name: "Amex Platinum", detail: "•••• 1002", color: "bg-neutral-100 text-neutral-600" }
+                { icon: <Wallet size={16} />, name: "Mezo Passport", detail: "Connected", color: "bg-purple-100 text-purple-600" },
+                { icon: <CreditCard size={16} />, name: "MUSD Token", detail: "On-chain", color: "bg-neutral-100 text-neutral-600" }
               ].map((m, i) => (
                 <div key={i} className="flex items-center gap-4 p-4 hover:bg-mezo-bg rounded-2xl transition-colors cursor-pointer group border border-transparent hover:border-mezo-ink/5">
                   <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-110", m.color)}>

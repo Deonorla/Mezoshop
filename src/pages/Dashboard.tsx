@@ -2,101 +2,11 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Compass, ShoppingBag, User, Plus, MessageSquare, Sparkles, Send, Mic, Image as ImageIcon, Bitcoin, ShoppingCart } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { IMAGES } from '@/src/lib/images';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useCart } from '@/src/hooks/queries';
+import { useChat, type ChatMessage, type ProductResult } from '@/src/hooks/useChat';
+import { useAccount } from 'wagmi';
 import Logo from '@/src/components/Logo';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type Role = 'user' | 'ai';
-
-interface ProductCard {
-  id: number;
-  name: string;
-  brand: string;
-  collection: string;
-  musd: string;
-  img: string;
-}
-
-interface Message {
-  id: number;
-  role: Role;
-  text: string;
-  products?: ProductCard[];
-}
-
-// ─── AI response catalogue ────────────────────────────────────────────────────
-
-const AI_RESPONSES: { keywords: string[]; text: string; products: ProductCard[] }[] = [
-  {
-    keywords: ['coat', 'jacket', 'outerwear', 'winter', 'alabaster'],
-    text: "Found the perfect match ✨ You have enough BTC collateral to borrow 5,600.00 MUSD — no selling required.",
-    products: [
-      { id: 1, name: 'Cashmere Overcoat', brand: 'Loro Piana', collection: 'Editorial Winter', musd: '5,600.00 MUSD', img: IMAGES.coats.cashmereCoat },
-    ],
-  },
-  {
-    keywords: ['bag', 'purse', 'handbag', 'tote', 'accessories'],
-    text: "Here's what I curated from our luxury accessories vault. Your BTC collateral covers all of these.",
-    products: [
-      { id: 2, name: 'Quilted Chain Bag', brand: 'Chanel', collection: 'Accessories', musd: '4,800.00 MUSD', img: IMAGES.bags.quiltedChain },
-      { id: 3, name: 'Black Tote', brand: 'Michael Kors', collection: 'Accessories', musd: '320.00 MUSD', img: IMAGES.bags.michaelKorsTote },
-    ],
-  },
-  {
-    keywords: ['watch', 'timepiece', 'rolex', 'chronograph'],
-    text: "Timepieces are our most exclusive category. Here's what's available — your collateral ratio looks healthy.",
-    products: [
-      { id: 4, name: 'Royal Oak Chronograph', brand: 'Audemars Piguet', collection: 'Timepieces', musd: '28,500.00 MUSD', img: IMAGES.watch.chronograph },
-      { id: 5, name: 'Silver Analog', brand: 'Rolex', collection: 'Timepieces', musd: '12,000.00 MUSD', img: IMAGES.watch.rolex },
-    ],
-  },
-  {
-    keywords: ['shoe', 'boot', 'sneaker', 'footwear', 'heel'],
-    text: "Pulled these from the footwear vault. All available for immediate MUSD checkout.",
-    products: [
-      { id: 6, name: 'Leather Chelsea Boot', brand: 'Saint Laurent', collection: 'Footwear', musd: '890.00 MUSD', img: IMAGES.shoes.chelseaBoot },
-      { id: 7, name: 'White Air Force 1', brand: 'Nike', collection: 'Sneakers', musd: '120.00 MUSD', img: IMAGES.shoes.nikeAirForce },
-    ],
-  },
-  {
-    keywords: ['suit', 'formal', 'menswear', 'blazer'],
-    text: "Sharp choice. Here's a tailored option from our menswear collection — borrow MUSD against your BTC and it ships today.",
-    products: [
-      { id: 8, name: 'Tailored Wool Suit', brand: 'Tom Ford', collection: 'Menswear', musd: '1,240.00 MUSD', img: IMAGES.menswear.blackSuit },
-    ],
-  },
-  {
-    keywords: ['jewel', 'ring', 'necklace', 'bracelet', 'earring', 'diamond'],
-    text: "Our fine jewellery collection is authenticated on-chain. Each piece comes with a Mezo Passport digital twin.",
-    products: [
-      { id: 9, name: 'Diamond Tennis Bracelet', brand: 'Tiffany & Co.', collection: 'Fine Jewellery', musd: '12,000.00 MUSD', img: IMAGES.jewellery.tennisBracelet },
-    ],
-  },
-  {
-    keywords: ['dress', 'gown', 'runway', 'fashion'],
-    text: "Runway pieces are limited — here's what's still available. Your MUSD borrow is instant, no credit check.",
-    products: [
-      { id: 10, name: 'Silk Evening Gown', brand: 'Valentino', collection: 'Runway Series', musd: '3,200.00 MUSD', img: IMAGES.dresses.silkGown },
-      { id: 11, name: 'Floral Mannequin Dress', brand: 'Valentino', collection: 'Runway Series', musd: '2,800.00 MUSD', img: IMAGES.dresses.floralMannequin },
-    ],
-  },
-];
-
-const FALLBACK_RESPONSE: Omit<typeof AI_RESPONSES[0], 'keywords'> = {
-  text: "I've searched our full catalogue. Here are the top picks based on your query — all available for MUSD checkout using your BTC collateral.",
-  products: [
-    { id: 99, name: 'Cashmere Overcoat', brand: 'Loro Piana', collection: 'Editorial Winter', musd: '5,600.00 MUSD', img: IMAGES.coats.cashmereCoat },
-    { id: 100, name: 'Quilted Chain Bag', brand: 'Chanel', collection: 'Accessories', musd: '4,800.00 MUSD', img: IMAGES.bags.quiltedChain },
-  ],
-};
-
-function getAIResponse(query: string) {
-  const q = query.toLowerCase();
-  return AI_RESPONSES.find(r => r.keywords.some(k => q.includes(k))) ?? FALLBACK_RESPONSE;
-}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -120,7 +30,7 @@ function TypingIndicator() {
   );
 }
 
-function InlineProductCard({ product }: { product: ProductCard }) {
+function InlineProductCard({ product }: { product: ProductResult }) {
   const [hovered, setHovered] = useState(false);
   return (
     <motion.div
@@ -133,7 +43,7 @@ function InlineProductCard({ product }: { product: ProductCard }) {
     >
       <div className="relative aspect-3/4 overflow-hidden rounded-2xl bg-mezo-cream-dark shadow-md">
         <img
-          src={product.img}
+          src={product.images[0]}
           alt={product.name}
           referrerPolicy="no-referrer"
           className={cn('w-full h-full object-cover transition-transform duration-700', hovered && 'scale-105')}
@@ -159,7 +69,7 @@ function InlineProductCard({ product }: { product: ProductCard }) {
         <p className="text-[11px] font-black text-mezo-ink leading-tight">{product.name}</p>
         <div className="flex items-center gap-1 pt-0.5">
           <Bitcoin size={9} className="text-mezo-ink/30" />
-          <p className="text-[10px] font-bold text-mezo-ink/60">{product.musd}</p>
+          <p className="text-[10px] font-bold text-mezo-ink/60">{product.musd} MUSD</p>
         </div>
       </div>
     </motion.div>
@@ -173,11 +83,11 @@ export default function Dashboard() {
   const { data: cartItems = [] } = useCart();
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
   const [query, setQuery] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  let msgId = useRef(0);
+
+  const { address } = useAccount();
+  const { messages, isStreaming, error, sendMessage, reset } = useChat(address);
 
   const sidebarItems = [
     { icon: <MessageSquare size={18} />, label: 'Stylist Chat', page: 'dashboard' },
@@ -208,34 +118,71 @@ export default function Dashboard() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [messages, isStreaming]);
 
-  function sendMessage(text: string) {
-    if (!text.trim()) return;
+  async function handleSendMessage(text: string) {
+    if (!text.trim() || isStreaming) return;
     setShowWelcome(false);
     setQuery('');
-
-    const userMsg: Message = { id: ++msgId.current, role: 'user', text };
-    setMessages(prev => [...prev, userMsg]);
-    setIsTyping(true);
-
-    // Simulate AI thinking time
-    setTimeout(() => {
-      const response = getAIResponse(text);
-      const aiMsg: Message = {
-        id: ++msgId.current,
-        role: 'ai',
-        text: response.text,
-        products: response.products,
-      };
-      setIsTyping(false);
-      setMessages(prev => [...prev, aiMsg]);
-    }, 1800);
+    await sendMessage(text);
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    sendMessage(query);
+    handleSendMessage(query);
+  }
+
+  function handleNewChat() {
+    reset();
+    setShowWelcome(true);
+  }
+
+  function renderMessage(msg: ChatMessage) {
+    if (msg.role === 'user') {
+      return (
+        <motion.div
+          key={msg.id}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <div className="flex justify-end">
+            <div className="bg-mezo-ink text-white px-5 py-3.5 rounded-2xl rounded-tr-none max-w-[70%] text-sm leading-relaxed">
+              {msg.content}
+            </div>
+          </div>
+        </motion.div>
+      );
+    }
+
+    return (
+      <motion.div
+        key={msg.id}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div className="flex gap-4 items-start">
+          <div className="w-10 h-10 rounded-2xl bg-mezo-gold flex items-center justify-center text-white shrink-0 shadow-lg shadow-mezo-gold/20">
+            <Sparkles size={16} />
+          </div>
+          <div className="space-y-4 flex-1 min-w-0">
+            {msg.content && (
+              <div className="bg-white px-5 py-4 rounded-2xl rounded-tl-none border border-mezo-ink/5 shadow-sm inline-block max-w-[85%]">
+                <p className="text-sm text-mezo-ink/80 leading-relaxed">{msg.content}</p>
+              </div>
+            )}
+            {msg.products && msg.products.length > 0 && (
+              <div className="flex gap-4 overflow-x-auto pb-2 hide-scrollbar">
+                {msg.products.map(product => (
+                  <InlineProductCard key={product.id} product={product} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    );
   }
 
   return (
@@ -289,7 +236,7 @@ export default function Dashboard() {
           </div>
           <div className="flex gap-4">
             <button
-              onClick={() => { setMessages([]); setShowWelcome(true); }}
+              onClick={handleNewChat}
               className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-mezo-ink/40 hover:text-mezo-ink transition-colors px-4 py-2 bg-white/50 rounded-full border border-mezo-ink/5"
             >
               <Plus size={14} /> New Chat
@@ -306,7 +253,7 @@ export default function Dashboard() {
 
             {/* Welcome state */}
             <AnimatePresence>
-              {showWelcome && (
+              {showWelcome && messages.length === 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -322,7 +269,7 @@ export default function Dashboard() {
                     {quickPrompts.map((p, i) => (
                       <button
                         key={i}
-                        onClick={() => sendMessage(p)}
+                        onClick={() => handleSendMessage(p)}
                         className="bg-white p-5 border border-mezo-ink/5 rounded-2xl text-[10px] uppercase font-black tracking-widest text-mezo-ink/40 hover:bg-mezo-ink hover:text-white transition-all shadow-sm text-left"
                       >
                         {p}
@@ -333,47 +280,28 @@ export default function Dashboard() {
               )}
             </AnimatePresence>
 
-            {/* Messages */}
-            {messages.map(msg => (
+            {/* Error state */}
+            {error && (
               <motion.div
-                key={msg.id}
-                initial={{ opacity: 0, y: 12 }}
+                initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
+                className="flex gap-4 items-start"
               >
-                {msg.role === 'user' ? (
-                  /* User bubble */
-                  <div className="flex justify-end">
-                    <div className="bg-mezo-ink text-white px-5 py-3.5 rounded-2xl rounded-tr-none max-w-[70%] text-sm leading-relaxed">
-                      {msg.text}
-                    </div>
-                  </div>
-                ) : (
-                  /* AI bubble + optional product cards */
-                  <div className="flex gap-4 items-start">
-                    <div className="w-10 h-10 rounded-2xl bg-mezo-gold flex items-center justify-center text-white shrink-0 shadow-lg shadow-mezo-gold/20">
-                      <Sparkles size={16} />
-                    </div>
-                    <div className="space-y-4 flex-1 min-w-0">
-                      <div className="bg-white px-5 py-4 rounded-2xl rounded-tl-none border border-mezo-ink/5 shadow-sm inline-block max-w-[85%]">
-                        <p className="text-sm text-mezo-ink/80 leading-relaxed">{msg.text}</p>
-                      </div>
-                      {msg.products && msg.products.length > 0 && (
-                        <div className="flex gap-4 overflow-x-auto pb-2 hide-scrollbar">
-                          {msg.products.map(product => (
-                            <InlineProductCard key={product.id} product={product} />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+                <div className="w-10 h-10 rounded-2xl bg-mezo-rose/20 flex items-center justify-center text-mezo-rose shrink-0">
+                  <Sparkles size={16} />
+                </div>
+                <div className="bg-white px-5 py-4 rounded-2xl rounded-tl-none border border-mezo-rose/20 shadow-sm inline-block max-w-[85%]">
+                  <p className="text-sm text-mezo-rose/80 leading-relaxed">Shopping assistant is temporarily unavailable.</p>
+                </div>
               </motion.div>
-            ))}
+            )}
 
-            {/* Typing indicator */}
+            {/* Messages */}
+            {messages.map(msg => renderMessage(msg))}
+
+            {/* Typing / streaming indicator */}
             <AnimatePresence>
-              {isTyping && (
+              {isStreaming && (
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -411,7 +339,7 @@ export default function Dashboard() {
               </div>
               <button
                 type="submit"
-                disabled={!query.trim() || isTyping}
+                disabled={!query.trim() || isStreaming}
                 className="w-10 h-10 rounded-full bg-mezo-ink flex items-center justify-center text-white shadow-lg shadow-mezo-ink/20 hover:bg-mezo-rose-dark active:scale-95 transition-all disabled:opacity-30 shrink-0"
               >
                 <Send size={16} />
@@ -460,7 +388,7 @@ export default function Dashboard() {
             {['Luxury coats', 'Designer bags', 'Rolex watches'].map((s, i) => (
               <button
                 key={i}
-                onClick={() => sendMessage(s)}
+                onClick={() => handleSendMessage(s)}
                 className="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-mezo-bg transition-colors group"
               >
                 <Search size={12} className="text-mezo-ink/20 group-hover:text-mezo-ink transition-colors" />

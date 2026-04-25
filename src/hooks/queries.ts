@@ -16,6 +16,8 @@ import {
   fetchPortfolio,
   type CartItem,
 } from '@/src/lib/api';
+import { backendClient } from '@/src/lib/backendClient';
+import { PRODUCTS } from '@/src/lib/products';
 
 // ─── Query Keys ───────────────────────────────────────────────────────────────
 
@@ -52,25 +54,72 @@ export function useProduct(id: number) {
 // ─── Cart ─────────────────────────────────────────────────────────────────────
 
 export function useCart() {
+  const { address } = useAccount();
   return useQuery({
     queryKey: keys.cart(),
-    queryFn: fetchCart,
+    queryFn: async () => {
+      if (!address) return [];
+      const backendItems = await backendClient.getCart(address);
+      // Enrich backend CartItems with local product data for UI compatibility
+      return backendItems.map(item => {
+        const product = PRODUCTS.find(p => String(p.id) === item.productId);
+        return {
+          productId: item.productId as unknown as number, // keep UI compat key
+          quantity: item.quantity,
+          size: item.size,
+          color: item.color,
+          // Attach the backend item id for removal
+          _backendId: item.id,
+          product: product ?? {
+            id: 0,
+            name: item.productId,
+            brand: '',
+            category: '',
+            musd: 0,
+            tag: '',
+            description: '',
+            images: [],
+          },
+        };
+      });
+    },
+    enabled: !!address,
   });
 }
 
 export function useAddToCart() {
   const qc = useQueryClient();
+  const { address } = useAccount();
   return useMutation({
-    mutationFn: (item: CartItem) => addToCart(item),
-    onSuccess: (data) => qc.setQueryData(keys.cart(), data),
+    mutationFn: async (item: CartItem) => {
+      if (!address) throw new Error('Wallet not connected');
+      await backendClient.addCartItem(address, {
+        productId: String(item.productId),
+        quantity: item.quantity,
+        size: item.size,
+        color: item.color,
+      });
+      // Refetch cart to get updated data
+      return qc.invalidateQueries({ queryKey: keys.cart() });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.cart() }),
   });
 }
 
 export function useRemoveFromCart() {
   const qc = useQueryClient();
+  const { address } = useAccount();
   return useMutation({
-    mutationFn: (productId: number) => removeFromCart(productId),
-    onSuccess: (data) => qc.setQueryData(keys.cart(), data),
+    mutationFn: async (productId: number) => {
+      if (!address) throw new Error('Wallet not connected');
+      // Get current cart to find the backend item id
+      const cartData = qc.getQueryData<ReturnType<typeof useCart>['data']>(keys.cart());
+      const item = cartData?.find(i => i.productId === productId);
+      const backendId = (item as { _backendId?: string })?._backendId ?? String(productId);
+      await backendClient.removeCartItem(address, backendId);
+      return qc.invalidateQueries({ queryKey: keys.cart() });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.cart() }),
   });
 }
 
@@ -112,6 +161,17 @@ export function useOrders() {
     queryKey: keys.orders(address),
     queryFn: () => fetchOrders(address),
     enabled: !!address,
+  });
+}
+
+/** Fetches orders from the real backend for the connected wallet. */
+export function useBackendOrders() {
+  const { address } = useAccount();
+  return useQuery({
+    queryKey: [...keys.orders(address), 'backend'],
+    queryFn: () => backendClient.getOrders(address!),
+    enabled: !!address,
+    staleTime: 30_000,
   });
 }
 

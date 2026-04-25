@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Bitcoin, ShieldCheck, Zap, TrendingUp, RefreshCw, AlertTriangle, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Bitcoin, ShieldCheck, Zap, TrendingUp, RefreshCw, AlertTriangle, ChevronUp, ChevronDown, Wallet } from 'lucide-react';
+import { useAccount, useBalance } from 'wagmi';
+import { formatUnits } from 'viem';
 import { cn } from '@/src/lib/utils';
+import { MUSD_TESTNET_ADDRESS, MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useBorrowPosition, useBorrowHistory, useBorrow, useRepay } from '@/src/hooks/queries';
 
@@ -9,6 +12,22 @@ export default function Borrow() {
   const { navigate } = useAppNavigation();
   const [borrowAmount, setBorrowAmount] = useState(1000);
   const [tab, setTab] = useState<'borrow' | 'repay'>('borrow');
+
+  const { address } = useAccount();
+
+  // Real MUSD balance with 10s refetch interval (Requirement 7.3)
+  const { data: musdBalanceData, isLoading: musdBalanceLoading } = useBalance({
+    address: address as `0x${string}` | undefined,
+    token: MUSD_TESTNET_ADDRESS as `0x${string}`,
+    chainId: MEZO_TESTNET_CHAIN_ID,
+    query: {
+      refetchInterval: 10_000,
+    },
+  });
+
+  const musdFormatted = musdBalanceData?.value !== undefined
+    ? Number(formatUnits(musdBalanceData.value, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+    : '—';
 
   const { data: position, isLoading: positionLoading } = useBorrowPosition();
   const { data: history = [] } = useBorrowHistory();
@@ -45,12 +64,6 @@ export default function Borrow() {
     { label: 'Interest Rate', value: '0%', sub: 'Forever free' },
   ];
 
-  const HISTORY = [
-    { type: 'borrow', amount: 1200, date: 'Apr 18, 2026', status: 'confirmed' },
-    { type: 'borrow', amount: 1200, date: 'Apr 10, 2026', status: 'confirmed' },
-    { type: 'repay', amount: 500, date: 'Apr 5, 2026', status: 'confirmed' },
-  ];
-
   return (
     <div className="min-h-screen bg-mezo-ink text-white font-sans selection:bg-mezo-gold/30">
 
@@ -80,11 +93,11 @@ export default function Borrow() {
 
         {/* ── Stats row ── */}
         {positionLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[1,2,3,4].map(i => <div key={i} className="h-32 rounded-3xl bg-white/5 animate-pulse" />)}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {[1,2,3,4,5].map(i => <div key={i} className="h-32 rounded-3xl bg-white/5 animate-pulse" />)}
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {STATS.map((stat, i) => (
               <motion.div
                 key={i}
@@ -103,6 +116,23 @@ export default function Borrow() {
                 <p className="text-[10px] text-white/30 mt-1">{stat.sub}</p>
               </motion.div>
             ))}
+
+            {/* Real MUSD Balance stat card */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: STATS.length * 0.08 }}
+              className="bg-mezo-gold/10 border border-mezo-gold/30 p-6 rounded-3xl relative overflow-hidden group"
+            >
+              <div className="absolute top-0 right-0 p-3 opacity-[0.08] scale-150 group-hover:scale-125 transition-transform duration-700">
+                <Wallet size={60} />
+              </div>
+              <p className="text-[9px] font-black uppercase tracking-[0.3em] text-mezo-gold/60 mb-2">MUSD Balance</p>
+              <p className="text-2xl font-display font-black tracking-tighter text-mezo-gold group-hover:text-white transition-colors">
+                {musdBalanceLoading ? '...' : musdFormatted}
+              </p>
+              <p className="text-[10px] text-white/30 mt-1">On-chain · live</p>
+            </motion.div>
           </div>
         )}
 
@@ -116,7 +146,7 @@ export default function Borrow() {
               {(['borrow', 'repay'] as const).map(t => (
                 <button
                   key={t}
-                  onClick={() => { setTab(t); setBorrowAmount(1000); setTxDone(false); }}
+                  onClick={() => { setTab(t); setBorrowAmount(1000); }}
                   className={cn(
                     'px-8 py-3 rounded-xl text-[10px] font-black tracking-[0.2em] uppercase transition-all',
                     tab === t ? 'bg-white text-mezo-ink shadow-lg' : 'text-white/40 hover:text-white'

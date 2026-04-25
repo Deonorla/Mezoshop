@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Bitcoin, ShieldCheck, Zap, CheckCircle2, ChevronRight, Wallet } from 'lucide-react';
+import { ArrowLeft, Bitcoin, ShieldCheck, Zap, CheckCircle2, ChevronRight, Wallet, X } from 'lucide-react';
 import { useAccount } from 'wagmi';
+import { formatUnits } from 'viem';
 import { cn } from '@/src/lib/utils';
 import { MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
-import { useCart, useRemoveFromCart, useBorrowPosition, useBorrow } from '@/src/hooks/queries';
+import { useCart, useRemoveFromCart } from '@/src/hooks/queries';
+import { useMUSDBalance } from '@/src/hooks/useMUSDBalance';
+import { useMUSDCheckout, InsufficientBalanceError } from '@/src/hooks/useMUSDCheckout';
+import type { CartItem as BackendCartItem } from '@/src/lib/backendClient';
 import WrongNetworkBanner from '@/src/components/WrongNetworkBanner';
 
-type Step = 'review' | 'borrow' | 'confirm' | 'success';
+type Step = 'review' | 'confirm' | 'success';
 
 const STEPS: { key: Step; label: string }[] = [
   { key: 'review', label: 'Review' },
-  { key: 'borrow', label: 'Borrow MUSD' },
   { key: 'confirm', label: 'Confirm' },
   { key: 'success', label: 'Done' },
 ];
@@ -20,30 +23,88 @@ const STEPS: { key: Step; label: string }[] = [
 export default function Checkout() {
   const { navigate } = useAppNavigation();
   const [step, setStep] = useState<Step>('review');
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [insufficientError, setInsufficientError] = useState<{ required: bigint; available: bigint } | null>(null);
+  const [orderWarning, setOrderWarning] = useState<string | null>(null);
 
-  const { chainId } = useAccount();
+  const { address, chainId } = useAccount();
   const isWrongNetwork = chainId !== MEZO_TESTNET_CHAIN_ID;
 
   const { data: cartItems = [], isLoading: cartLoading } = useCart();
   const removeFromCart = useRemoveFromCart();
-  const { data: borrow } = useBorrowPosition();
-  const borrowMutation = useBorrow();
+  const { balance: musdBalance, formatted: musdFormatted, isLoading: balanceLoading } = useMUSDBalance(address);
+  const { checkout, isPending, error: checkoutError } = useMUSDCheckout();
 
   const total = cartItems.reduce((s, i) => s + i.product.musd * i.quantity, 0);
-  const btcCollateral = borrow?.btcLocked ?? 0;
-  const availableMUSD = borrow?.available ?? 0;
-  const borrowRatio = availableMUSD > 0 ? Math.round((total / availableMUSD) * 100) : 0;
-
-  function handleBorrow() {
-    borrowMutation.mutate(total, {
-      onSuccess: () => setStep('confirm'),
-    });
-  }
 
   const stepIndex = STEPS.findIndex(s => s.key === step);
 
+  // Adapter: map CartEntry (local) to BackendCartItem format
+  function toBackendCartItems(): BackendCartItem[] {
+    return cartItems.map(entry => ({
+      id: String(entry.productId),
+      walletAddress: address ?? '',
+      productId: String(entry.productId),
+      quantity: entry.quantity,
+      size: entry.size,
+      color: entry.color,
+      addedAt: new Date().toISOString(),
+    }));
+  }
+
+  async function handleCheckout() {
+    setInsufficientError(null);
+    setOrderWarning(null);
+
+    try {
+      const backendItems = toBackendCartItems();
+      const result = await checkout(backendItems, total);
+      setTxHash(result.txHash);
+      setOrderId(result.orderId);
+
+      // Check if there was an order recording warning (error contains txHash)
+      if (checkoutError && checkoutError.includes(result.txHash)) {
+        setOrderWarning(checkoutError);
+      }
+
+      setStep('success');
+    } catch (err) {
+      if (err instanceof InsufficientBalanceError) {
+        setInsufficientError({ required: err.required, available: err.available });
+      } else if (
+        err instanceof Error &&
+        (err.name === 'UserRejectedRequestError' ||
+          err.message.includes('User rejected') ||
+          err.message.includes('user rejected'))
+      ) {
+        setToast('Transaction cancelled.');
+        setTimeout(() => setToast(null), 4000);
+      }
+      // Other errors are shown via checkoutError state from the hook
+    }
+  }
+
   return (
     <div className="min-h-screen bg-mezo-ink text-white font-sans selection:bg-mezo-gold/30">
+
+      {/* ── Toast ── */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 bg-white text-mezo-ink px-6 py-3 rounded-2xl shadow-xl text-sm font-black"
+          >
+            {toast}
+            <button onClick={() => setToast(null)} className="text-mezo-ink/40 hover:text-mezo-ink">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Wrong Network Banner ── */}
       <WrongNetworkBanner />
@@ -129,7 +190,6 @@ export default function Checkout() {
               <div className="space-y-6">
                 <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
                   <h3 className="text-[10px] font-black tracking-[0.4em] uppercase text-white/40">Order Summary</h3>
-                  {/* Summary */}
                   <div className="space-y-3">
                     {cartItems.map(item => (
                       <div key={item.productId} className="flex justify-between text-sm">
@@ -146,105 +206,18 @@ export default function Checkout() {
                     </div>
                   </div>
                   <button
-                    onClick={() => setStep('borrow')}
-                    className="w-full flex items-center justify-center gap-2 bg-mezo-gold py-4 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-lg shadow-mezo-gold/20"
+                    onClick={() => setStep('confirm')}
+                    disabled={cartItems.length === 0}
+                    className="w-full flex items-center justify-center gap-2 bg-mezo-gold py-4 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-lg shadow-mezo-gold/20 disabled:opacity-40"
                   >
-                    <Bitcoin size={14} /> Continue to Borrow
+                    <Zap size={14} /> Continue to Pay
                   </button>
                 </div>
-
-                {/* BTC collateral preview */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Bitcoin size={14} className="text-mezo-gold" />
-                    <span className="text-[9px] font-black tracking-widest uppercase text-white/40">Your Collateral</span>
-                  </div>
-                  <p className="text-2xl font-black text-white">{btcCollateral} BTC</p>
-                  <p className="text-[10px] text-white/30">≈ {availableMUSD.toLocaleString()} MUSD available</p>
-                </div>
               </div>
             </motion.div>
           )}
 
-          {/* ── Step 2: Borrow MUSD ── */}
-          {step === 'borrow' && (
-            <motion.div
-              key="borrow"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="max-w-xl mx-auto space-y-8"
-            >
-              <div className="text-center space-y-3">
-                <p className="text-[9px] font-black tracking-[0.4em] uppercase text-mezo-gold">Step 2 of 3</p>
-                <h2 className="font-display text-4xl font-black tracking-tighter italic">Borrow MUSD</h2>
-                <p className="text-sm text-white/40">Your BTC stays locked as collateral. MUSD is borrowed instantly.</p>
-              </div>
-
-              {/* Collateral card */}
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { label: 'BTC Collateral', value: `${btcCollateral} BTC`, sub: 'Locked on Mezo' },
-                    { label: 'Available MUSD', value: `${availableMUSD.toLocaleString()}`, sub: 'Ready to borrow' },
-                    { label: 'Borrow Amount', value: `${total.toLocaleString()} MUSD`, sub: 'For this order' },
-                    { label: 'Interest Rate', value: '0%', sub: 'Forever free' },
-                  ].map((s, i) => (
-                    <div key={i} className="bg-white/5 rounded-2xl p-4 space-y-1">
-                      <p className="text-[8px] font-black tracking-widest uppercase text-white/30">{s.label}</p>
-                      <p className="font-display text-lg font-black text-white">{s.value}</p>
-                      <p className="text-[9px] text-white/30">{s.sub}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Collateral ratio bar */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[9px] font-black uppercase tracking-widest">
-                    <span className="text-white/30">Collateral Used</span>
-                    <span className="text-mezo-gold">{borrowRatio}%</span>
-                  </div>
-                  <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${borrowRatio}%` }}
-                      transition={{ duration: 1, ease: 'easeOut' }}
-                      className="h-full bg-mezo-gold rounded-full"
-                    />
-                  </div>
-                  <p className="text-[9px] text-white/20">Safe zone · Liquidation at 80%</p>
-                </div>
-              </div>
-
-              <button
-                onClick={handleBorrow}
-                disabled={borrowMutation.isPending}
-                className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-60"
-              >
-                {borrowMutation.isPending ? (
-                  <>
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                      className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
-                    />
-                    Borrowing MUSD...
-                  </>
-                ) : (
-                  <><Bitcoin size={16} /> Borrow {total.toLocaleString()} MUSD</>
-                )}
-              </button>
-
-              <div className="flex items-start gap-3 bg-white/5 border border-white/8 rounded-2xl p-5">
-                <ShieldCheck size={16} className="text-green-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-white/40 leading-relaxed">
-                  Your BTC is never sold. It remains locked as collateral on the Mezo protocol. You can repay MUSD at any time to unlock your BTC.
-                </p>
-              </div>
-            </motion.div>
-          )}
-
-          {/* ── Step 3: Confirm ── */}
+          {/* ── Step 2: Confirm ── */}
           {step === 'confirm' && (
             <motion.div
               key="confirm"
@@ -254,9 +227,9 @@ export default function Checkout() {
               className="max-w-xl mx-auto space-y-8"
             >
               <div className="text-center space-y-3">
-                <p className="text-[9px] font-black tracking-[0.4em] uppercase text-mezo-gold">Step 3 of 3</p>
+                <p className="text-[9px] font-black tracking-[0.4em] uppercase text-mezo-gold">Step 2 of 2</p>
                 <h2 className="font-display text-4xl font-black tracking-tighter italic">Confirm Order</h2>
-                <p className="text-sm text-white/40">Review and place your order.</p>
+                <p className="text-sm text-white/40">Review and pay with MUSD.</p>
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-5">
@@ -274,7 +247,7 @@ export default function Checkout() {
                   </div>
                 ))}
                 <div className="pt-4 border-t border-white/10 flex justify-between items-center">
-                  <span className="text-[10px] font-black tracking-widest uppercase text-white/40">Total Borrowed</span>
+                  <span className="text-[10px] font-black tracking-widest uppercase text-white/40">Total</span>
                   <div className="flex items-center gap-2">
                     <Bitcoin size={14} className="text-mezo-gold" />
                     <span className="font-display text-2xl font-black text-white">{total.toLocaleString()} MUSD</span>
@@ -282,27 +255,67 @@ export default function Checkout() {
                 </div>
               </div>
 
-              {/* Payment method */}
+              {/* MUSD Balance */}
               <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-2xl p-5">
                 <div className="w-10 h-10 rounded-xl bg-mezo-gold/20 flex items-center justify-center">
                   <Wallet size={18} className="text-mezo-gold" />
                 </div>
                 <div>
-                  <p className="text-sm font-black text-white">Mezo Passport</p>
-                  <p className="text-[9px] text-white/30 font-mono">0x72...91b0</p>
+                  <p className="text-sm font-black text-white">MUSD Balance</p>
+                  <p className="text-[9px] text-white/30 font-mono">
+                    {balanceLoading ? 'Loading...' : `${Number(musdFormatted).toLocaleString(undefined, { maximumFractionDigits: 2 })} MUSD`}
+                  </p>
                 </div>
                 <div className="ml-auto flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-green-400" />
-                  <span className="text-[9px] font-black uppercase tracking-widest text-green-400">Connected</span>
+                  <div className={cn('w-2 h-2 rounded-full', musdBalance !== undefined && musdBalance >= BigInt(Math.floor(total)) * BigInt(10 ** 18) ? 'bg-green-400' : 'bg-mezo-rose')} />
+                  <span className={cn('text-[9px] font-black uppercase tracking-widest', musdBalance !== undefined && musdBalance >= BigInt(Math.floor(total)) * BigInt(10 ** 18) ? 'text-green-400' : 'text-mezo-rose')}>
+                    {musdBalance !== undefined && musdBalance >= BigInt(Math.floor(total)) * BigInt(10 ** 18) ? 'Sufficient' : 'Insufficient'}
+                  </span>
                 </div>
               </div>
 
+              {/* Insufficient balance error */}
+              {insufficientError && (
+                <div className="bg-mezo-rose/10 border border-mezo-rose/30 rounded-2xl p-5 space-y-2">
+                  <p className="text-sm font-black text-mezo-rose">Insufficient MUSD Balance</p>
+                  <p className="text-[11px] text-white/60 leading-relaxed">
+                    You need {Number(formatUnits(insufficientError.required, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MUSD but only have {Number(formatUnits(insufficientError.available, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} MUSD.{' '}
+                    <a
+                      href="https://faucet.test.mezo.org"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-mezo-gold underline hover:text-white transition-colors"
+                    >
+                      Get MUSD from faucet
+                    </a>
+                  </p>
+                </div>
+              )}
+
+              {/* Generic checkout error (not insufficient balance, not user rejected) */}
+              {checkoutError && !insufficientError && !checkoutError.includes('Order recording failed') && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4">
+                  <p className="text-[11px] text-red-300">{checkoutError}</p>
+                </div>
+              )}
+
               <button
-                onClick={() => setStep('success')}
-                disabled={isWrongNetwork}
-                className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-mezo-gold disabled:hover:text-mezo-ink"
+                onClick={handleCheckout}
+                disabled={isPending || isWrongNetwork || cartItems.length === 0}
+                className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-mezo-gold disabled:hover:text-white"
               >
-                <Zap size={16} /> Place Order
+                {isPending ? (
+                  <>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                      className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                    />
+                    Processing Payment...
+                  </>
+                ) : (
+                  <><Zap size={16} /> Pay with MUSD</>
+                )}
               </button>
 
               {isWrongNetwork && (
@@ -310,10 +323,17 @@ export default function Checkout() {
                   Switch to Mezo Testnet to place your order
                 </p>
               )}
+
+              <div className="flex items-start gap-3 bg-white/5 border border-white/8 rounded-2xl p-5">
+                <ShieldCheck size={16} className="text-green-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-white/40 leading-relaxed">
+                  Your MUSD will be transferred directly to the merchant wallet on Mezo Testnet. The transaction is irreversible once confirmed.
+                </p>
+              </div>
             </motion.div>
           )}
 
-          {/* ── Step 4: Success ── */}
+          {/* ── Step 3: Success ── */}
           {step === 'success' && (
             <motion.div
               key="success"
@@ -333,23 +353,42 @@ export default function Checkout() {
               <div className="space-y-3">
                 <h2 className="font-display text-4xl font-black tracking-tighter italic text-white">Order Placed!</h2>
                 <p className="text-white/40 leading-relaxed">
-                  Your MUSD has been borrowed and payment confirmed. Your items will ship within 24 hours.
+                  Your MUSD payment has been confirmed on-chain. Your items will ship within 24 hours.
                 </p>
               </div>
+
+              {/* Order recording warning */}
+              {orderWarning && (
+                <div className="bg-mezo-gold/10 border border-mezo-gold/30 rounded-2xl p-5 text-left space-y-2">
+                  <p className="text-[11px] font-black text-mezo-gold uppercase tracking-widest">Order Recording Notice</p>
+                  <p className="text-[11px] text-white/60 leading-relaxed">{orderWarning}</p>
+                </div>
+              )}
 
               {/* Summary */}
               <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-4 text-left">
                 {[
-                  { label: 'Order ID', value: '#MZ-' + Math.random().toString(36).slice(2, 8).toUpperCase() },
-                  { label: 'MUSD Borrowed', value: `${total.toLocaleString()} MUSD` },
-                  { label: 'BTC Collateral', value: `${btcCollateral} BTC (locked)` },
-                  { label: 'Interest', value: '0% — forever' },
+                  { label: 'Order ID', value: orderId ? `#${orderId.slice(0, 8).toUpperCase()}` : '#—' },
+                  { label: 'Total Paid', value: `${total.toLocaleString()} MUSD` },
+                  { label: 'Transaction', value: txHash ? `${txHash.slice(0, 10)}...${txHash.slice(-6)}` : '—' },
                 ].map((r, i) => (
                   <div key={i} className="flex justify-between text-sm">
                     <span className="text-white/30">{r.label}</span>
-                    <span className="text-white font-bold">{r.value}</span>
+                    <span className="text-white font-bold font-mono">{r.value}</span>
                   </div>
                 ))}
+                {txHash && (
+                  <div className="pt-2 border-t border-white/10">
+                    <a
+                      href={`https://explorer.test.mezo.org/tx/${txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-mezo-gold hover:text-white transition-colors font-black uppercase tracking-widest"
+                    >
+                      View on Explorer →
+                    </a>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-3">
