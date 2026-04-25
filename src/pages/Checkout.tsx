@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Bitcoin, ShieldCheck, Zap, CheckCircle2, ChevronRight, Wallet } from 'lucide-react';
+import { useAccount } from 'wagmi';
 import { cn } from '@/src/lib/utils';
+import { MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useCart, useRemoveFromCart, useBorrowPosition, useBorrow } from '@/src/hooks/queries';
+import WrongNetworkBanner from '@/src/components/WrongNetworkBanner';
 
 type Step = 'review' | 'borrow' | 'confirm' | 'success';
 
@@ -17,6 +20,9 @@ const STEPS: { key: Step; label: string }[] = [
 export default function Checkout() {
   const { navigate } = useAppNavigation();
   const [step, setStep] = useState<Step>('review');
+
+  const { chainId } = useAccount();
+  const isWrongNetwork = chainId !== MEZO_TESTNET_CHAIN_ID;
 
   const { data: cartItems = [], isLoading: cartLoading } = useCart();
   const removeFromCart = useRemoveFromCart();
@@ -38,6 +44,9 @@ export default function Checkout() {
 
   return (
     <div className="min-h-screen bg-mezo-ink text-white font-sans selection:bg-mezo-gold/30">
+
+      {/* ── Wrong Network Banner ── */}
+      <WrongNetworkBanner />
 
       {/* ── Header ── */}
       <header className="px-8 md:px-12 py-8 flex justify-between items-center border-b border-white/5 bg-mezo-ink/80 backdrop-blur-xl sticky top-0 z-50">
@@ -290,10 +299,17 @@ export default function Checkout() {
 
               <button
                 onClick={() => setStep('success')}
-                className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20"
+                disabled={isWrongNetwork}
+                className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-mezo-gold disabled:hover:text-mezo-ink"
               >
                 <Zap size={16} /> Place Order
               </button>
+
+              {isWrongNetwork && (
+                <p className="text-center text-[10px] text-mezo-rose font-black tracking-widest uppercase">
+                  Switch to Mezo Testnet to place your order
+                </p>
+              )}
             </motion.div>
           )}
 
