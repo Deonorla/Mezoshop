@@ -12,8 +12,6 @@ import { metaMaskWallet, walletConnectWallet } from '@rainbow-me/rainbowkit/wall
 import { QueryClient } from '@tanstack/react-query';
 
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? '';
-
-// Use testnet in dev, mainnet in production
 const isMainnet = import.meta.env.PROD;
 
 export const wagmiConfig = getConfig({

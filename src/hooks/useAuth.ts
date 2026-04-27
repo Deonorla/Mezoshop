@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 
 const ONBOARDING_KEY = 'mezo_onboarded';
@@ -23,26 +24,41 @@ export interface UserProfile {
 }
 
 export function useAuth() {
-  const { isConnected, address } = useAccount();
+  const { address, status } = useAccount();
+  const qc = useQueryClient();
 
-  const hasOnboarded = isConnected && address
-    ? localStorage.getItem(onboardingKey(address)) === 'true'
-    : false;
+  // Treat wagmi as the source of truth — only resolve once it's done reconnecting
+  const isSettled = status === 'connected' || status === 'disconnected';
+  const isConnected = status === 'connected' && !!address;
+  // TanStack Query manages onboarding state — keyed per address
+  const { data: hasOnboarded = false } = useQuery({
+    queryKey: ['auth', 'onboarded', address],
+    queryFn: () => {
+      if (!address) return false;
+      return localStorage.getItem(onboardingKey(address)) === 'true';
+    },
+    enabled: isConnected,
+    staleTime: Infinity, // never goes stale — we invalidate manually on markOnboarded
+  });
 
   const markOnboarded = () => {
-    if (address) {
-      localStorage.setItem(onboardingKey(address), 'true');
-    }
+    if (!address) return;
+    localStorage.setItem(onboardingKey(address), 'true');
+    // Immediately update the cache so ProtectedRoute sees it before navigation
+    qc.setQueryData(['auth', 'onboarded', address], true);
   };
 
   const saveProfile = (profile: UserProfile) => {
-    if (address) {
-      localStorage.setItem(profileKey(address), JSON.stringify(profile));
-    }
+    if (!address) return;
+    localStorage.setItem(profileKey(address), JSON.stringify(profile));
+    qc.setQueryData(['auth', 'profile', address], profile);
   };
 
   const getProfile = (): UserProfile => {
     if (!address) return {};
+    // Check cache first
+    const cached = qc.getQueryData<UserProfile>(['auth', 'profile', address]);
+    if (cached) return cached;
     try {
       return JSON.parse(localStorage.getItem(profileKey(address)) ?? '{}');
     } catch {
@@ -50,5 +66,13 @@ export function useAuth() {
     }
   };
 
-  return { isConnected, address, hasOnboarded, markOnboarded, saveProfile, getProfile };
+  return {
+    isConnected,
+    isSettled,   // true once wagmi has finished reconnecting — use this to gate redirects
+    address,
+    hasOnboarded,
+    markOnboarded,
+    saveProfile,
+    getProfile,
+  };
 }

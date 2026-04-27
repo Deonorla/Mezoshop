@@ -1,23 +1,30 @@
 import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useAccount } from 'wagmi';
 import { ArrowLeft, ShieldCheck, Wallet, Zap, Bitcoin } from 'lucide-react';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useAuth } from '@/src/hooks/useAuth';
 import Logo from '@/src/components/Logo';
+import { persistSession } from '@/src/components/ProtectedRoute';
 
 export default function Auth() {
   const { goToLanding, goToOnboarding, goToDashboard } = useAppNavigation();
-  const { isConnected, hasOnboarded } = useAuth();
+  const { isConnected, hasOnboarded, address } = useAuth();
   const { openConnectModal } = useConnectModal();
+  const { connector, status } = useAccount();
 
-  // Redirect once connected — skip onboarding if already done
   useEffect(() => {
-    if (isConnected) {
-      if (hasOnboarded) goToDashboard();
+    if (status === 'connected' && address) {
+      const connectorId = connector?.id ?? '';
+      const onboarded = hasOnboarded;
+      const addr = address;
+      persistSession(addr, connectorId);
+      // Navigate synchronously before the disconnect fires
+      if (onboarded) goToDashboard();
       else goToOnboarding();
     }
-  }, [isConnected, hasOnboarded]);
+  }, [status, address]);
 
   return (
     <div className="flex h-screen bg-mezo-bg overflow-hidden">
@@ -52,7 +59,7 @@ export default function Auth() {
           className="absolute top-12 left-12 flex items-center gap-3 text-mezo-ink/40 hover:text-mezo-ink transition-colors font-sans text-[10px] tracking-[0.3em] uppercase font-bold group"
         >
           <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-          Back 
+          Back
         </button>
 
         <motion.div
@@ -61,7 +68,6 @@ export default function Auth() {
           transition={{ delay: 0.2, duration: 0.8 }}
           className="w-full max-w-sm mx-auto space-y-10"
         >
-          {/* Header */}
           <div className="space-y-4">
             <Logo variant="light" size="md" className="mb-2" />
             <h1 className="font-display text-5xl font-black tracking-tighter text-mezo-ink">
@@ -72,7 +78,6 @@ export default function Auth() {
             </p>
           </div>
 
-          {/* Trust badges */}
           <div className="grid grid-cols-3 gap-3">
             {[
               { icon: <Bitcoin size={14} className="text-mezo-gold" />, label: 'BTC Native' },
@@ -91,7 +96,6 @@ export default function Auth() {
             ))}
           </div>
 
-          {/* Custom connect button */}
           <div className="flex flex-col items-stretch gap-4">
             <p className="text-[9px] font-black tracking-[0.3em] uppercase text-mezo-ink/30 text-center">
               Supported wallets

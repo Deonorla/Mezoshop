@@ -7,6 +7,7 @@ import { useCart } from '@/src/hooks/queries';
 import { useChat, type ChatMessage, type ProductResult } from '@/src/hooks/useChat';
 import { useAccount } from 'wagmi';
 import Logo from '@/src/components/Logo';
+import { useWalletBalances } from '@/src/hooks/useWalletBalances';
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ export default function Dashboard() {
   const { navigate } = useAppNavigation();
   const { data: cartItems = [] } = useCart();
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
+  const { btcDisplay, musdFormatted, isLoading: balancesLoading } = useWalletBalances();
   const [query, setQuery] = useState('');
   const [showWelcome, setShowWelcome] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -213,13 +215,17 @@ export default function Dashboard() {
         <div className="bg-mezo-cream-light p-6 rounded-2xl border border-mezo-ink/5 space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <Bitcoin size={14} className="text-mezo-gold" />
-            <span className="text-[9px] font-black tracking-widest uppercase text-mezo-ink/60">BTC Collateral</span>
+            <span className="text-[9px] font-black tracking-widest uppercase text-mezo-ink/60">BTC Balance</span>
           </div>
-          <p className="text-xl font-black text-mezo-ink">0.42 BTC</p>
+          <p className="text-xl font-black text-mezo-ink">
+            {balancesLoading ? '...' : `${btcDisplay} BTC`}
+          </p>
           <div className="h-1.5 w-full bg-mezo-cream-dark rounded-full overflow-hidden">
             <div className="h-full w-3/5 bg-mezo-gold rounded-full" />
           </div>
-          <p className="text-[9px] font-black tracking-widest uppercase text-mezo-ink/30">≈ 24,800 MUSD available</p>
+          <p className="text-[9px] font-black tracking-widest uppercase text-mezo-ink/30">
+            {balancesLoading ? '...' : `≈ ${musdFormatted} MUSD`}
+          </p>
         </div>
       </aside>
 
@@ -363,11 +369,13 @@ export default function Dashboard() {
               <Bitcoin size={16} className="text-mezo-gold" />
               <span className="text-[9px] font-black tracking-widest uppercase text-white/50">Collateral</span>
             </div>
-            <p className="text-3xl font-black text-white relative z-10">0.42 BTC</p>
+            <p className="text-3xl font-black text-white relative z-10">
+              {balancesLoading ? '...' : `${btcDisplay} BTC`}
+            </p>
             <div className="space-y-1 relative z-10">
               <div className="flex justify-between text-[9px] font-black uppercase tracking-widest">
-                <span className="text-white/40">Borrowed</span>
-                <span className="text-mezo-gold">2,400 MUSD</span>
+                <span className="text-white/40">MUSD Balance</span>
+                <span className="text-mezo-gold">{balancesLoading ? '...' : `${musdFormatted} MUSD`}</span>
               </div>
               <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
                 <div className="h-full w-2/5 bg-mezo-gold rounded-full" />
