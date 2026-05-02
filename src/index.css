@@ -39,3 +39,18 @@
 .editorial-reveal {
   mask-image: linear-gradient(to bottom, black 0%, black 80%, transparent 100%);
 }
+
+/* Touch-device visibility helpers for InlineProductCard */
+/* On pointer-fine (mouse) devices, hide touch-only elements */
+@media (hover: hover) and (pointer: fine) {
+  .touch-only {
+    display: none;
+  }
+}
+
+/* On touch devices (hover: none), hide hover-only elements */
+@media (hover: none) {
+  .touch-visible {
+    display: flex;
+  }
+}

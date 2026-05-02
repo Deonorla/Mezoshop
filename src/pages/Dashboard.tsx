@@ -6,8 +6,28 @@ import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useCart } from '@/src/hooks/queries';
 import { useChat, type ChatMessage, type ProductResult } from '@/src/hooks/useChat';
 import { useAccount } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import Logo from '@/src/components/Logo';
 import { useWalletBalances } from '@/src/hooks/useWalletBalances';
+import { useAuth } from '@/src/hooks/useAuth';
+import MarkdownMessage from '@/src/components/MarkdownMessage';
+import { backendClient } from '@/src/lib/backendClient';
+
+// ─── Quick Prompts ────────────────────────────────────────────────────────────
+
+export interface QuickPromptContext {
+  aesthetic?: string;
+  shopFor?: string;
+  musdBalance?: string;
+}
+
+export function generateQuickPrompts(ctx: QuickPromptContext): [string, string, string, string] {
+  const slot0 = ctx.aesthetic ? `Find me ${ctx.aesthetic} pieces` : 'Find me a luxury coat';
+  const slot1 = ctx.shopFor ? `Best ${ctx.shopFor} looks this season` : 'Show me designer bags';
+  const slot2 = ctx.musdBalance ? `What can I get for ${ctx.musdBalance} MUSD?` : 'Best watches under 15k MUSD';
+  const slot3 = 'New runway drops';
+  return [slot0, slot1, slot2, slot3];
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -31,8 +51,42 @@ function TypingIndicator() {
   );
 }
 
-function InlineProductCard({ product }: { product: ProductResult }) {
+interface InlineProductCardProps {
+  product: ProductResult;
+  walletAddress: string | undefined;
+  onAddToCart: (productId: string) => Promise<void>;
+  onNavigate: (productId: string) => void;
+}
+
+function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCardProps) {
   const [hovered, setHovered] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  async function handleAddToCart() {
+    if (status === 'loading') return;
+    setStatus('loading');
+    try {
+      await onAddToCart(product.id);
+      setStatus('success');
+    } catch {
+      setStatus('error');
+    } finally {
+      setTimeout(() => setStatus('idle'), 1500);
+    }
+  }
+
+  function getCartButtonLabel() {
+    if (status === 'success') return 'Added ✓';
+    if (status === 'error') return 'Failed — retry';
+    return (
+      <>
+        <ShoppingCart size={10} /> Add to Cart
+      </>
+    );
+  }
+
+  const showOverlay = hovered || status !== 'idle';
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -43,31 +97,69 @@ function InlineProductCard({ product }: { product: ProductResult }) {
       onMouseLeave={() => setHovered(false)}
     >
       <div className="relative aspect-3/4 overflow-hidden rounded-2xl bg-mezo-cream-dark shadow-md">
+        {/* Clickable image */}
         <img
           src={product.images[0]}
           alt={product.name}
           referrerPolicy="no-referrer"
-          className={cn('w-full h-full object-cover transition-transform duration-700', hovered && 'scale-105')}
+          onClick={() => onNavigate(product.id)}
+          className={cn(
+            'w-full h-full object-cover transition-transform duration-700 cursor-pointer',
+            hovered && 'scale-105',
+          )}
         />
+        {/* Overlay with Add to Cart + View Product buttons */}
         <AnimatePresence>
-          {hovered && (
+          {showOverlay && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.2 }}
-              className="absolute bottom-0 left-0 right-0 p-2"
+              className="absolute bottom-0 left-0 right-0 p-2 space-y-1"
             >
-              <button className="w-full bg-mezo-ink text-white text-[9px] font-bold tracking-[0.2em] uppercase py-2 flex items-center justify-center gap-1.5 hover:bg-mezo-rose-dark transition-colors">
-                <ShoppingCart size={10} /> Add to Cart
+              {/* View Product — always visible on touch, hover-only on desktop */}
+              <button
+                onClick={() => onNavigate(product.id)}
+                className="touch-visible w-full bg-white/90 text-mezo-ink text-[9px] font-bold tracking-[0.2em] uppercase py-2 flex items-center justify-center gap-1.5 hover:bg-white transition-colors rounded-sm"
+              >
+                View Product
+              </button>
+              {/* Add to Cart */}
+              <button
+                onClick={handleAddToCart}
+                disabled={status === 'loading'}
+                className={cn(
+                  'w-full text-white text-[9px] font-bold tracking-[0.2em] uppercase py-2 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
+                  status === 'success' && 'bg-green-600',
+                  status === 'error' && 'bg-mezo-rose-dark',
+                  (status === 'idle' || status === 'loading') && 'bg-mezo-ink hover:bg-mezo-rose-dark',
+                )}
+              >
+                {getCartButtonLabel()}
               </button>
             </motion.div>
           )}
         </AnimatePresence>
+        {/* Touch-device "View Product" — always visible via CSS media query */}
+        <div className="touch-only absolute top-2 right-2">
+          <button
+            onClick={() => onNavigate(product.id)}
+            className="bg-white/90 text-mezo-ink text-[8px] font-bold tracking-[0.15em] uppercase px-2 py-1 rounded-sm"
+          >
+            View
+          </button>
+        </div>
       </div>
       <div className="pt-2.5 space-y-0.5">
         <p className="text-[8px] font-bold tracking-[0.2em] uppercase text-mezo-gold">{product.brand}</p>
-        <p className="text-[11px] font-black text-mezo-ink leading-tight">{product.name}</p>
+        {/* Clickable product name */}
+        <p
+          onClick={() => onNavigate(product.id)}
+          className="text-[11px] font-black text-mezo-ink leading-tight cursor-pointer hover:text-mezo-gold transition-colors"
+        >
+          {product.name}
+        </p>
         <div className="flex items-center gap-1 pt-0.5">
           <Bitcoin size={9} className="text-mezo-ink/30" />
           <p className="text-[10px] font-bold text-mezo-ink/60">{product.musd} MUSD</p>
@@ -83,13 +175,17 @@ export default function Dashboard() {
   const { navigate } = useAppNavigation();
   const { data: cartItems = [] } = useCart();
   const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
-  const { btcDisplay, musdFormatted, isLoading: balancesLoading } = useWalletBalances();
+  const { btcDisplay, musdFormatted, musdRaw, isLoading: balancesLoading } = useWalletBalances();
   const [query, setQuery] = useState('');
   const [showWelcome, setShowWelcome] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { address } = useAccount();
   const { messages, isStreaming, error, sendMessage, reset } = useChat(address);
+  const queryClient = useQueryClient();
+
+  const { getProfile } = useAuth();
+  const profile = getProfile();
 
   const sidebarItems = [
     { icon: <MessageSquare size={18} />, label: 'Stylist Chat', page: 'dashboard' },
@@ -111,12 +207,20 @@ export default function Dashboard() {
     { icon: <Bitcoin size={18} />, label: 'Borrow MUSD', page: 'borrow' },
   ];
 
-  const quickPrompts = [
-    'Find me a luxury coat',
-    'Show me designer bags',
-    'Best watches under 15k MUSD',
-    'New runway drops',
-  ];
+  const quickPrompts = generateQuickPrompts({
+    aesthetic: profile.aesthetic,
+    shopFor: profile.shopFor,
+    musdBalance: balancesLoading ? undefined : musdFormatted,
+  });
+
+  // Build userContext from profile + raw MUSD balance
+  const musdBalanceNumeric = musdRaw ? parseFloat(musdRaw.formatted) : undefined;
+  const userContext = {
+    ...(profile.aesthetic ? { aesthetic: profile.aesthetic } : {}),
+    ...(profile.shopFor ? { shopFor: profile.shopFor } : {}),
+    ...(profile.size ? { size: profile.size } : {}),
+    ...(musdBalanceNumeric !== undefined && !isNaN(musdBalanceNumeric) ? { musdBalance: musdBalanceNumeric } : {}),
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -126,7 +230,7 @@ export default function Dashboard() {
     if (!text.trim() || isStreaming) return;
     setShowWelcome(false);
     setQuery('');
-    await sendMessage(text);
+    await sendMessage(text, userContext);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -171,13 +275,22 @@ export default function Dashboard() {
           <div className="space-y-4 flex-1 min-w-0">
             {msg.content && (
               <div className="bg-white px-5 py-4 rounded-2xl rounded-tl-none border border-mezo-ink/5 shadow-sm inline-block max-w-[85%]">
-                <p className="text-sm text-mezo-ink/80 leading-relaxed">{msg.content}</p>
+                <MarkdownMessage content={msg.content} className="text-sm text-mezo-ink/80 leading-relaxed" />
               </div>
             )}
             {msg.products && msg.products.length > 0 && (
               <div className="flex gap-4 overflow-x-auto pb-2 hide-scrollbar">
                 {msg.products.map(product => (
-                  <InlineProductCard key={product.id} product={product} />
+                  <InlineProductCard
+                    key={product.id}
+                    product={product}
+                    walletAddress={address}
+                    onAddToCart={async (productId: string) => {
+                      await backendClient.addCartItem(address ?? '', { productId, quantity: 1 });
+                      queryClient.invalidateQueries({ queryKey: ['cart'] });
+                    }}
+                    onNavigate={(productId: string) => navigate(`/products/${productId}`)}
+                  />
                 ))}
               </div>
             )}

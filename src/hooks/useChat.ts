@@ -39,12 +39,19 @@ export interface ChatMessage {
   products?: ProductResult[];
 }
 
+export interface UserContext {
+  aesthetic?: string;
+  shopFor?: string;
+  size?: string;
+  musdBalance?: number;
+}
+
 export interface UseChatReturn {
   messages: ChatMessage[];
   isStreaming: boolean;
   sessionId: string | null;
   error: string | null;
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, userContext?: UserContext) => Promise<void>;
   reset: () => void;
 }
 
@@ -60,10 +67,21 @@ function generateId(): string {
 
 /**
  * Parse a single line from the Vercel AI SDK data stream.
- * Returns the text chunk if the line is a text delta (prefix "0:"),
- * or null for other line types.
+ *
+ * Stream line prefixes:
+ *   0:"text"      — text delta
+ *   2:[{...}]     — message parts (tool calls, tool results, etc.)
+ *   3:"error"     — error
+ *   d:{...}       — finish signal
  */
-function parseStreamLine(line: string): { type: 'text'; chunk: string } | { type: 'finish' } | { type: 'error'; message: string } | null {
+function parseStreamLine(
+  line: string,
+):
+  | { type: 'text'; chunk: string }
+  | { type: 'products'; products: ProductResult[] }
+  | { type: 'finish' }
+  | { type: 'error'; message: string }
+  | null {
   if (!line.trim()) return null;
 
   // Text delta: 0:"json-encoded string"
@@ -74,6 +92,50 @@ function parseStreamLine(line: string): { type: 'text'; chunk: string } | { type
     } catch {
       return null;
     }
+  }
+
+  // Message parts: 2:[{type, ...}, ...]
+  // Tool results arrive here as: [{type:"tool-result", toolName:"searchProducts", result:{products:[...]}}]
+  if (line.startsWith('2:')) {
+    try {
+      const parts = JSON.parse(line.slice(2)) as Array<{
+        type: string;
+        toolName?: string;
+        result?: unknown;
+      }>;
+      console.debug('[useChat] 2: parts', JSON.stringify(parts).slice(0, 400));
+      const products: ProductResult[] = [];
+      for (const part of parts) {
+        if (part.type !== 'tool-result') continue;
+
+        // searchProducts returns { products: [...], total, query }
+        if (part.toolName === 'searchProducts') {
+          const result = part.result as { products?: ProductResult[] } | undefined;
+          if (Array.isArray(result?.products)) {
+            products.push(
+              ...result.products.map((p) => ({
+                ...p,
+                id: String(p.id),
+              })),
+            );
+          }
+        }
+
+        // getProductDetails returns a single product object
+        if (part.toolName === 'getProductDetails') {
+          const result = part.result as ProductResult | { error?: string } | undefined;
+          if (result && 'id' in result && !('error' in result)) {
+            products.push({ ...result as ProductResult, id: String((result as ProductResult).id) });
+          }
+        }
+      }
+      if (products.length > 0) {
+        return { type: 'products', products };
+      }
+    } catch {
+      // malformed line — ignore
+    }
+    return null;
   }
 
   // Finish signal: d:{...}
@@ -91,7 +153,6 @@ function parseStreamLine(line: string): { type: 'text'; chunk: string } | { type
     }
   }
 
-  // 2: data lines (tool results, etc.) — ignored for now
   return null;
 }
 
@@ -108,7 +169,7 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
   messagesRef.current = messages;
 
   const sendMessage = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, userContext?: UserContext): Promise<void> => {
       if (!text.trim() || isStreaming) return;
 
       setError(null);
@@ -153,6 +214,7 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
           body: JSON.stringify({
             messages: requestMessages,
             ...(sessionId ? { sessionId } : {}),
+            ...(userContext ? { userContext } : {}),
           }),
         });
 
@@ -166,8 +228,15 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
 
         // Handle other non-ok responses
         if (!response.ok) {
-          const errText = await response.text().catch(() => response.statusText);
-          throw new Error(`Chat request failed: ${response.status} ${errText}`);
+          await response.text().catch(() => null);
+          // 400 usually means wallet address missing/invalid
+          if (response.status === 400) {
+            setError('Please make sure your wallet is connected before chatting.');
+          } else {
+            setError(`Chat request failed (${response.status}). Please try again.`);
+          }
+          setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          return;
         }
 
         // 4. Capture session ID from response header
@@ -185,6 +254,7 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
         const decoder = new TextDecoder();
         let buffer = '';
         let accumulatedText = '';
+        const accumulatedProducts: ProductResult[] = [];
 
         while (true) {
           const { done, value } = await reader.read();
@@ -211,8 +281,23 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
                     : m,
                 ),
               );
+            } else if (parsed.type === 'products') {
+              // Merge new products, deduplicating by id
+              for (const p of parsed.products) {
+                if (!accumulatedProducts.find((existing) => existing.id === p.id)) {
+                  accumulatedProducts.push(p);
+                }
+              }
+              // Attach products to the assistant message immediately
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, products: [...accumulatedProducts] }
+                    : m,
+                ),
+              );
             } else if (parsed.type === 'error') {
-              setError('Shopping assistant is temporarily unavailable.');
+              setError(parsed.message || 'Shopping assistant is temporarily unavailable.');
             }
             // 'finish' type — stream is done, handled by reader.done
           }
@@ -230,11 +315,24 @@ export function useChat(walletAddress: string | undefined): UseChatReturn {
                   : m,
               ),
             );
+          } else if (parsed?.type === 'products') {
+            for (const p of parsed.products) {
+              if (!accumulatedProducts.find((existing) => existing.id === p.id)) {
+                accumulatedProducts.push(p);
+              }
+            }
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, products: [...accumulatedProducts] }
+                  : m,
+              ),
+            );
           }
         }
 
-        // 6. Finalize: if no content was streamed, remove the placeholder
-        if (!accumulatedText) {
+        // 6. Finalize: if no content was streamed and no products, remove the placeholder
+        if (!accumulatedText && accumulatedProducts.length === 0) {
           setMessages((prev) => prev.filter((m) => m.id !== assistantId));
         }
       } catch (err) {

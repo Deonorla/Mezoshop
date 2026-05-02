@@ -7,24 +7,76 @@ import { walletAuth } from "../middleware/wallet-auth";
 import type { WalletAuthVariables } from "../middleware/wallet-auth";
 import { sessionService } from "../services/session-service";
 import { productService } from "../services/product-service";
+import { cartService } from "../services/cart-service";
 import { env } from "../lib/env";
 
 // Initialise Gemini provider with the API key from env
 const googleAI = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
-const model = googleAI("gemini-1.5-flash");
+const model = googleAI("gemini-2.5-flash");
 
-const SYSTEM_PROMPT = `You are a helpful and knowledgeable fashion shopping assistant for MezoShop, a premium fashion store on the Mezo blockchain.
+export interface UserContext {
+  aesthetic?: string;
+  shopFor?: string;
+  size?: string;
+  musdBalance?: number;
+}
 
-Your role is to help users discover and explore fashion products from our curated catalog. You can search for products by name, brand, category, or price range, and provide detailed information about specific items.
+export function buildSystemPrompt(ctx: UserContext): string {
+  const base = `You are a Bitcoin-native personal stylist for MezoShop — the premier fashion destination on the Mezo blockchain.
 
-Guidelines:
-- Be friendly, enthusiastic, and knowledgeable about fashion
-- When users ask about products, use the searchProducts tool to find relevant items
-- When users want details about a specific product, use the getProductDetails tool
-- Present product information clearly, including name, brand, price (in MUSD), and description
-- Suggest complementary items when appropriate
+Your role is to deliver opinionated, fashion-forward recommendations that help users look and feel their best. You have a sharp eye for style, deep knowledge of current trends, and the confidence to tell users exactly what works.
+
+**Formatting guidelines:**
+- Use **bold** for product names and key style terms
+- Use bullet lists when presenting multiple options or outfit components
+- Keep responses concise but impactful — quality over quantity
+- NEVER mention image paths, file names, or URLs in your text responses — the UI renders product images automatically from tool results
+
+**Tool use rules — CRITICAL:**
+- You MUST call \`searchProducts\` every time a user asks to see, find, browse, or shop for products — no exceptions
+- NEVER describe or list products from memory — always call \`searchProducts\` first, then recommend from the actual results
+- If \`searchProducts\` returns no results, try again with a broader query (e.g. use category only, or empty query)
+- NEVER say you are "having trouble with the search engine" — just retry with a simpler query
+- When a user asks for images or wants to see a product, call \`searchProducts\` — the UI will display the images automatically
+- When a user wants to purchase an item, use the \`addToCart\` tool immediately — don't just suggest it
+
+**Shopping guidelines:**
 - All prices are in MUSD (Mezo USD stablecoin)
-- If you cannot find what the user is looking for, suggest alternatives or ask clarifying questions`;
+- Use \`getProductDetails\` for detailed information on a specific product by ID
+- Make bold, specific recommendations rather than hedging — if something suits the user, say so
+- If you can't find an exact match, suggest the closest alternative and explain why it works`;
+
+  const fields: string[] = [];
+
+  if (ctx.aesthetic !== undefined && ctx.aesthetic !== null) {
+    fields.push(`The user's style aesthetic is **${ctx.aesthetic}** — lean into this when making recommendations.`);
+  }
+  if (ctx.shopFor !== undefined && ctx.shopFor !== null) {
+    fields.push(`The user is shopping for **${ctx.shopFor}** — focus your recommendations accordingly.`);
+  }
+  if (ctx.size !== undefined && ctx.size !== null) {
+    fields.push(`The user's size is **${ctx.size}** — only recommend items available in this size when possible.`);
+  }
+  if (ctx.musdBalance !== undefined && ctx.musdBalance !== null) {
+    const formatted = ctx.musdBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    fields.push(`The user has **${formatted} MUSD** available — prioritise items within their budget and acknowledge when something exceeds it.`);
+  }
+
+  if (fields.length === 0) {
+    return base;
+  }
+
+  const personalisation = `\n\n--- User Context ---\n${fields.join("\n")}\n\nUse this context to personalise every recommendation. Make the user feel like you know their wardrobe personally.`;
+
+  return base + personalisation;
+}
+
+const userContextSchema = z.object({
+  aesthetic: z.string().optional(),
+  shopFor: z.string().optional(),
+  size: z.string().optional(),
+  musdBalance: z.number().optional(),
+}).optional();
 
 export const chatRouter = new Hono<{ Variables: WalletAuthVariables }>();
 
@@ -35,7 +87,7 @@ chatRouter.post("/", async (c) => {
   const walletAddress = c.get("walletAddress");
 
   // Parse request body
-  let body: { messages: UIMessage[]; sessionId?: string };
+  let body: { messages: UIMessage[]; sessionId?: string; userContext?: UserContext };
   try {
     body = await c.req.json();
   } catch {
@@ -43,6 +95,8 @@ chatRouter.post("/", async (c) => {
   }
 
   const { messages, sessionId: requestedSessionId } = body;
+  const parsedUserContext = userContextSchema.safeParse(body.userContext);
+  const userContext: UserContext | undefined = parsedUserContext.success ? parsedUserContext.data : undefined;
 
   if (!Array.isArray(messages) || messages.length === 0) {
     return c.json({ error: "messages must be a non-empty array" }, 400);
@@ -85,7 +139,7 @@ chatRouter.post("/", async (c) => {
       description:
         "Search for fashion products in the MezoShop catalog. Use this to find products matching a query, category, brand, or price range.",
       parameters: z.object({
-        query: z.string().describe("Search query (product name, type, style, etc.)"),
+        query: z.string().optional().default("").describe("Search query (product name, type, style, etc.). Use empty string to browse all products."),
         category: z
           .string()
           .optional()
@@ -128,15 +182,52 @@ chatRouter.post("/", async (c) => {
         return product;
       },
     }),
+
+    addToCart: tool({
+      description:
+        "Add a product to the user's cart. Use this immediately when the user wants to purchase or add an item.",
+      parameters: z.object({
+        productId: z.string().describe("The product ID to add to the cart"),
+        size: z.string().optional().describe("The size of the product (if applicable)"),
+        color: z.string().optional().describe("The color of the product (if applicable)"),
+      }),
+      execute: async ({ productId, size, color }) => {
+        if (!walletAddress) {
+          return { success: false, error: "Please connect your wallet to add items to your cart." };
+        }
+        try {
+          await cartService.add(walletAddress, { productId, quantity: 1, size, color });
+          const product = await productService.getById(productId);
+          const name = product?.name ?? productId;
+          return { success: true, productName: name, message: `Added ${name} to your cart.` };
+        } catch {
+          return { success: false, error: "Could not add item to cart. Please try the cart button on the product card." };
+        }
+      },
+    }),
   };
 
   // --- Stream LLM response ---
   const result = streamText({
+    onError: (error) => {
+      console.error("[chat] streamText error:", error);
+    },
+    experimental_repairToolCall: async ({ toolCall, tools, parameterSchema, error }) => {
+      // If query is missing, inject an empty string so the tool can still execute
+      if (toolCall.toolName === "searchProducts") {
+        const args = JSON.parse(toolCall.args ?? "{}");
+        if (!args.query) {
+          args.query = "";
+          return { ...toolCall, args: JSON.stringify(args) };
+        }
+      }
+      return null; // let other errors propagate normally
+    },
     model,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(userContext ?? {}),
     messages: coreMessages,
     tools,
-    maxSteps: 3, // equivalent to stopWhen: stepCountIs(3)
+    maxSteps: 5, // allow retries if first search returns no results
     onFinish: async ({ response }) => {
       // Append the new messages (user message + assistant response) to session history
       const updatedMessages = appendResponseMessages({
