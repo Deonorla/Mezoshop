@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { streamText, tool, appendResponseMessages, convertToCoreMessages } from "ai";
+import { streamText, tool, appendResponseMessages, convertToCoreMessages, StreamData } from "ai";
+import type { JSONValue } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
 import type { UIMessage } from "ai";
@@ -207,12 +208,18 @@ chatRouter.post("/", async (c) => {
     }),
   };
 
+  // StreamData lets us send product annotations alongside the text stream
+  const streamData = new StreamData();
+
+  // Collect products from tool results to send as stream annotations
+  const collectedProducts: JSONValue[] = [];
+
   // --- Stream LLM response ---
   const result = streamText({
     onError: (error) => {
       console.error("[chat] streamText error:", error);
     },
-    experimental_repairToolCall: async ({ toolCall, tools, parameterSchema, error }) => {
+    experimental_repairToolCall: async ({ toolCall }) => {
       // If query is missing, inject an empty string so the tool can still execute
       if (toolCall.toolName === "searchProducts") {
         const args = JSON.parse(toolCall.args ?? "{}");
@@ -223,25 +230,55 @@ chatRouter.post("/", async (c) => {
       }
       return null; // let other errors propagate normally
     },
+    onStepFinish: ({ toolResults }) => {
+      // Collect products from each tool step and append as annotations
+      for (const tr of toolResults) {
+        if (tr.toolName === "searchProducts") {
+          const res = tr.result as { products?: JSONValue[] };
+          if (Array.isArray(res?.products)) {
+            for (const p of res.products) {
+              const product = p as Record<string, JSONValue>;
+              const id = String(product.id);
+              if (!collectedProducts.find((x) => String((x as Record<string, JSONValue>).id) === id)) {
+                collectedProducts.push({ ...product, id } as JSONValue);
+              }
+            }
+          }
+        }
+        if (tr.toolName === "getProductDetails") {
+          const res = tr.result as Record<string, JSONValue>;
+          if (res && res.id && !res.error) {
+            const id = String(res.id);
+            if (!collectedProducts.find((x) => String((x as Record<string, JSONValue>).id) === id)) {
+              collectedProducts.push({ ...res, id } as JSONValue);
+            }
+          }
+        }
+      }
+      // Append current product list as annotation so frontend gets updates mid-stream
+      if (collectedProducts.length > 0) {
+        streamData.append({ products: collectedProducts } as JSONValue);
+      }
+    },
     model,
     system: buildSystemPrompt(userContext ?? {}),
     messages: coreMessages,
     tools,
     maxSteps: 5, // allow retries if first search returns no results
     onFinish: async ({ response }) => {
+      // Close the StreamData so the stream can finish
+      streamData.close();
       // Append the new messages (user message + assistant response) to session history
       const updatedMessages = appendResponseMessages({
         messages: allMessages,
         responseMessages: response.messages,
       });
-      // Replace session messages with the full updated history
-      // (appendResponseMessages returns the full array including prior messages)
       const newMessages = updatedMessages.slice(allMessages.length) as UIMessage[];
       sessionService.appendMessages(sessionId, [latestUserMessage, ...newMessages]);
     },
   });
 
-  // Set the session ID header and return the SSE stream
+  // Set the session ID header and return the SSE stream with product annotations
   c.header("X-Session-Id", sessionId);
-  return result.toDataStreamResponse();
+  return result.toDataStreamResponse({ data: streamData });
 });

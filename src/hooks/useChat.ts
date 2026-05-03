@@ -94,38 +94,16 @@ function parseStreamLine(
     }
   }
 
-  // Message parts: 2:[{type, ...}, ...]
-  // Tool results arrive here as: [{type:"tool-result", toolName:"searchProducts", result:{products:[...]}}]
+  // Message parts / annotations: 2:[{...}, ...]
+  // StreamData.append() sends data as: 2:[{"products":[...]}]
   if (line.startsWith('2:')) {
     try {
-      const parts = JSON.parse(line.slice(2)) as Array<{
-        type: string;
-        toolName?: string;
-        result?: unknown;
-      }>;
-      console.debug('[useChat] 2: parts', JSON.stringify(parts).slice(0, 400));
+      const items = JSON.parse(line.slice(2)) as Array<{ products?: ProductResult[] }>;
       const products: ProductResult[] = [];
-      for (const part of parts) {
-        if (part.type !== 'tool-result') continue;
-
-        // searchProducts returns { products: [...], total, query }
-        if (part.toolName === 'searchProducts') {
-          const result = part.result as { products?: ProductResult[] } | undefined;
-          if (Array.isArray(result?.products)) {
-            products.push(
-              ...result.products.map((p) => ({
-                ...p,
-                id: String(p.id),
-              })),
-            );
-          }
-        }
-
-        // getProductDetails returns a single product object
-        if (part.toolName === 'getProductDetails') {
-          const result = part.result as ProductResult | { error?: string } | undefined;
-          if (result && 'id' in result && !('error' in result)) {
-            products.push({ ...result as ProductResult, id: String((result as ProductResult).id) });
+      for (const item of items) {
+        if (Array.isArray(item?.products)) {
+          for (const p of item.products) {
+            products.push({ ...p, id: String(p.id) });
           }
         }
       }

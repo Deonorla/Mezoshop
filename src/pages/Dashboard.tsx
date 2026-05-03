@@ -54,116 +54,176 @@ function TypingIndicator() {
 interface InlineProductCardProps {
   product: ProductResult;
   walletAddress: string | undefined;
-  onAddToCart: (productId: string) => Promise<void>;
+  onAddToCart: (productId: string, size?: string, color?: string) => Promise<void>;
   onNavigate: (productId: string) => void;
 }
 
 function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCardProps) {
-  const [hovered, setHovered] = useState(false);
+  const [activeImg, setActiveImg] = useState(0);
+  const [selectedColor, setSelectedColor] = useState<string | null>(
+    product.colors && product.colors.length > 0 ? product.colors[0] : null,
+  );
+  const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  // Map colors to image indices: images are grouped by color in order
+  // e.g. 2 colors × 2 images each → color[0] → images[0,1], color[1] → images[2,3]
+  const colors = product.colors ?? [];
+  const imagesPerColor = colors.length > 0 ? Math.floor(product.images.length / colors.length) : product.images.length;
+
+  function getColorImageIndex(colorIndex: number) {
+    return colorIndex * imagesPerColor;
+  }
+
+  function handleColorSelect(color: string, colorIndex: number) {
+    setSelectedColor(color);
+    setActiveImg(getColorImageIndex(colorIndex));
+  }
 
   async function handleAddToCart() {
     if (status === 'loading') return;
     setStatus('loading');
     try {
-      await onAddToCart(product.id);
+      await onAddToCart(product.id, selectedSize ?? undefined, selectedColor ?? undefined);
       setStatus('success');
     } catch {
       setStatus('error');
     } finally {
-      setTimeout(() => setStatus('idle'), 1500);
+      setTimeout(() => setStatus('idle'), 2000);
     }
   }
 
-  function getCartButtonLabel() {
-    if (status === 'success') return 'Added ✓';
-    if (status === 'error') return 'Failed — retry';
-    return (
-      <>
-        <ShoppingCart size={10} /> Add to Cart
-      </>
-    );
-  }
-
-  const showOverlay = hovered || status !== 'idle';
+  const displayImages = product.images.length > 0 ? product.images : [];
+  const currentImage = displayImages[activeImg] ?? displayImages[0];
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="w-44 shrink-0 group cursor-pointer"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      className="w-52 shrink-0 bg-white rounded-2xl overflow-hidden border border-mezo-ink/8 shadow-md flex flex-col"
     >
-      <div className="relative aspect-3/4 overflow-hidden rounded-2xl bg-mezo-cream-dark shadow-md">
-        {/* Clickable image */}
+      {/* Image */}
+      <div
+        className="relative aspect-3/4 overflow-hidden bg-mezo-cream-dark cursor-pointer"
+        onClick={() => onNavigate(product.id)}
+      >
         <img
-          src={product.images[0]}
+          src={currentImage}
           alt={product.name}
-          referrerPolicy="no-referrer"
-          onClick={() => onNavigate(product.id)}
-          className={cn(
-            'w-full h-full object-cover transition-transform duration-700 cursor-pointer',
-            hovered && 'scale-105',
-          )}
+          className="w-full h-full object-cover transition-transform duration-500 hover:scale-105"
         />
-        {/* Overlay with Add to Cart + View Product buttons */}
-        <AnimatePresence>
-          {showOverlay && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.2 }}
-              className="absolute bottom-0 left-0 right-0 p-2 space-y-1"
-            >
-              {/* View Product — always visible on touch, hover-only on desktop */}
-              <button
-                onClick={() => onNavigate(product.id)}
-                className="touch-visible w-full bg-white/90 text-mezo-ink text-[9px] font-bold tracking-[0.2em] uppercase py-2 flex items-center justify-center gap-1.5 hover:bg-white transition-colors rounded-sm"
-              >
-                View Product
-              </button>
-              {/* Add to Cart */}
-              <button
-                onClick={handleAddToCart}
-                disabled={status === 'loading'}
-                className={cn(
-                  'w-full text-white text-[9px] font-bold tracking-[0.2em] uppercase py-2 flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
-                  status === 'success' && 'bg-green-600',
-                  status === 'error' && 'bg-mezo-rose-dark',
-                  (status === 'idle' || status === 'loading') && 'bg-mezo-ink hover:bg-mezo-rose-dark',
-                )}
-              >
-                {getCartButtonLabel()}
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        {/* Touch-device "View Product" — always visible via CSS media query */}
-        <div className="touch-only absolute top-2 right-2">
-          <button
-            onClick={() => onNavigate(product.id)}
-            className="bg-white/90 text-mezo-ink text-[8px] font-bold tracking-[0.15em] uppercase px-2 py-1 rounded-sm"
-          >
-            View
-          </button>
-        </div>
+        {/* Tag badge */}
+        <span className="absolute top-2 left-2 bg-mezo-ink text-white text-[8px] font-black tracking-[0.2em] uppercase px-2 py-1 rounded-sm">
+          {product.tag}
+        </span>
+        {/* Image dots if multiple images for current color */}
+        {imagesPerColor > 1 && (
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+            {Array.from({ length: Math.min(imagesPerColor, 4) }).map((_, i) => {
+              const imgIdx = (colors.length > 0 ? getColorImageIndex(colors.indexOf(selectedColor ?? colors[0])) : 0) + i;
+              return (
+                <button
+                  key={i}
+                  onClick={(e) => { e.stopPropagation(); setActiveImg(imgIdx); }}
+                  className={cn(
+                    'w-1.5 h-1.5 rounded-full transition-all',
+                    activeImg === imgIdx ? 'bg-white' : 'bg-white/40',
+                  )}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
-      <div className="pt-2.5 space-y-0.5">
-        <p className="text-[8px] font-bold tracking-[0.2em] uppercase text-mezo-gold">{product.brand}</p>
-        {/* Clickable product name */}
-        <p
-          onClick={() => onNavigate(product.id)}
-          className="text-[11px] font-black text-mezo-ink leading-tight cursor-pointer hover:text-mezo-gold transition-colors"
-        >
-          {product.name}
-        </p>
-        <div className="flex items-center gap-1 pt-0.5">
-          <Bitcoin size={9} className="text-mezo-ink/30" />
-          <p className="text-[10px] font-bold text-mezo-ink/60">{product.musd} MUSD</p>
+
+      {/* Details */}
+      <div className="p-3 flex flex-col gap-2 flex-1">
+        {/* Brand + Name */}
+        <div>
+          <p className="text-[8px] font-black tracking-[0.2em] uppercase text-mezo-gold mb-0.5">{product.brand}</p>
+          <p
+            className="text-[11px] font-black text-mezo-ink leading-tight cursor-pointer hover:text-mezo-gold transition-colors line-clamp-2"
+            onClick={() => onNavigate(product.id)}
+          >
+            {product.name}
+          </p>
         </div>
+
+        {/* Price */}
+        <div className="flex items-center gap-1">
+          <Bitcoin size={9} className="text-mezo-ink/30" />
+          <p className="text-[11px] font-black text-mezo-ink">{product.musd} <span className="text-mezo-gold">MUSD</span></p>
+        </div>
+
+        {/* Color swatches */}
+        {colors.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[8px] font-black uppercase tracking-widest text-mezo-ink/40">
+              {selectedColor ?? 'Color'}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {colors.map((color, i) => (
+                <button
+                  key={color}
+                  title={color}
+                  onClick={() => handleColorSelect(color, i)}
+                  className={cn(
+                    'px-2 py-0.5 rounded-full text-[8px] font-bold border transition-all',
+                    selectedColor === color
+                      ? 'bg-mezo-ink text-white border-mezo-ink'
+                      : 'bg-transparent text-mezo-ink/60 border-mezo-ink/20 hover:border-mezo-ink/60',
+                  )}
+                >
+                  {color}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Size selector */}
+        {product.sizes && product.sizes.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[8px] font-black uppercase tracking-widest text-mezo-ink/40">Size</p>
+            <div className="flex flex-wrap gap-1">
+              {product.sizes.map((size) => (
+                <button
+                  key={size}
+                  onClick={() => setSelectedSize(size === selectedSize ? null : size)}
+                  className={cn(
+                    'w-7 h-7 rounded-lg text-[9px] font-black border transition-all',
+                    selectedSize === size
+                      ? 'bg-mezo-ink text-white border-mezo-ink'
+                      : 'bg-transparent text-mezo-ink/60 border-mezo-ink/20 hover:border-mezo-ink/60',
+                  )}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Add to Cart */}
+        <button
+          onClick={handleAddToCart}
+          disabled={status === 'loading'}
+          className={cn(
+            'mt-auto w-full py-2.5 rounded-xl text-[9px] font-black tracking-[0.15em] uppercase flex items-center justify-center gap-1.5 transition-all disabled:opacity-60',
+            status === 'success' && 'bg-green-600 text-white',
+            status === 'error' && 'bg-mezo-rose-dark text-white',
+            (status === 'idle' || status === 'loading') && 'bg-mezo-ink text-white hover:bg-mezo-rose-dark',
+          )}
+        >
+          {status === 'success' ? (
+            'Added ✓'
+          ) : status === 'error' ? (
+            'Failed — retry'
+          ) : (
+            <><ShoppingCart size={10} /> Add to Cart</>
+          )}
+        </button>
       </div>
     </motion.div>
   );
@@ -285,8 +345,8 @@ export default function Dashboard() {
                     key={product.id}
                     product={product}
                     walletAddress={address}
-                    onAddToCart={async (productId: string) => {
-                      await backendClient.addCartItem(address ?? '', { productId, quantity: 1 });
+                    onAddToCart={async (productId: string, size?: string, color?: string) => {
+                      await backendClient.addCartItem(address ?? '', { productId, quantity: 1, size, color });
                       queryClient.invalidateQueries({ queryKey: ['cart'] });
                     }}
                     onNavigate={(productId: string) => navigate(`/products/${productId}`)}
