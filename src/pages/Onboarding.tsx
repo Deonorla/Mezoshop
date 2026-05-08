@@ -59,7 +59,7 @@ export default function Onboarding() {
 
   const canAdvance = step < 4 ? !!selections[step] : !!deliveryValid;
 
-  const nextStep = () => {
+  const nextStep = async () => {
     if (step < totalSteps) {
       setStep(step + 1);
     } else {
@@ -69,8 +69,8 @@ export default function Onboarding() {
         size: selections[3],
         ...delivery,
       };
-      saveProfile(profile);
-      markOnboarded();
+      await saveProfile(profile);
+      await markOnboarded();
       setTimeout(() => goToDashboard(), 0);
     }
   };

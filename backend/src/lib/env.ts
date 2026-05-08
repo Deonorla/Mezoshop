@@ -11,6 +11,18 @@ const envSchema = z.object({
     .min(1, "FRONTEND_ORIGIN is required")
     .url("FRONTEND_ORIGIN must be a valid URL"),
   PORT: z.string().optional().default("3001"),
+  LENDING_CONTRACT_ADDRESS: z
+    .string()
+    .optional()
+    .default("")
+    .refine(
+      (v) => v === "" || /^0x[0-9a-fA-F]{40}$/.test(v),
+      "LENDING_CONTRACT_ADDRESS must be a valid EVM address"
+    ),
+  LENDING_SIGNER_PRIVATE_KEY: z
+    .string()
+    .optional()
+    .default(""),
 });
 
 function loadEnv() {

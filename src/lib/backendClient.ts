@@ -8,6 +8,33 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface UserProfile {
+  walletAddress: string;
+  aesthetic?: string | null;
+  shopFor?: string | null;
+  size?: string | null;
+  fullName?: string | null;
+  phone?: string | null;
+  addressLine?: string | null;
+  city?: string | null;
+  country?: string | null;
+  onboarded: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface UpsertProfileInput {
+  aesthetic?: string;
+  shopFor?: string;
+  size?: string;
+  fullName?: string;
+  phone?: string;
+  addressLine?: string;
+  city?: string;
+  country?: string;
+  onboarded?: boolean;
+}
+
 export interface CartItem {
   id: string;
   walletAddress: string;
@@ -75,6 +102,22 @@ export interface Order {
   txHash: string;
   status: 'pending' | 'confirmed';
   createdAt: string;
+}
+
+export interface BorrowPosition {
+  btcLocked: number;
+  btcPriceUSD: number;
+  collateralValueUSD: number;
+  totalBorrowable: number;
+  alreadyBorrowed: number;
+  available: number;
+}
+
+export interface BorrowTx {
+  type: 'borrow' | 'repay';
+  amount: number;
+  date: string;
+  status: string;
 }
 
 // ─── Error class ──────────────────────────────────────────────────────────────
@@ -214,6 +257,83 @@ export function createBackendClient(walletAddress: string) {
         (res) => handleResponse<Order[]>(res),
       );
     },
+
+    // ── Borrow / Lending ──────────────────────────────────────────────────────
+
+    /** GET /api/borrow/position — returns the lending position for the connected wallet */
+    getBorrowPosition(): Promise<BorrowPosition> {
+      return fetch(`${BASE_URL}/api/borrow/position`, { headers: headers() }).then(
+        (res) => handleResponse<BorrowPosition>(res),
+      );
+    },
+
+    /** GET /api/borrow/history — returns borrow/repay transaction history */
+    getBorrowHistory(): Promise<BorrowTx[]> {
+      return fetch(`${BASE_URL}/api/borrow/history`, { headers: headers() }).then(
+        (res) => handleResponse<BorrowTx[]>(res),
+      );
+    },
+
+    /** POST /api/borrow — executes a borrow transaction */
+    executeBorrow(amount: number): Promise<{ txHash: string; btcPriceUSD: number }> {
+      return fetch(`${BASE_URL}/api/borrow`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ amount }),
+      }).then((res) => handleResponse<{ txHash: string; btcPriceUSD: number }>(res));
+    },
+
+    /** POST /api/repay — executes a repay transaction */
+    executeRepay(amount: number): Promise<{ txHash: string }> {
+      return fetch(`${BASE_URL}/api/repay`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ amount }),
+      }).then((res) => handleResponse<{ txHash: string }>(res));
+    },
+
+    // ── Profile ───────────────────────────────────────────────────────────────
+
+    /** GET /api/profile — returns the user profile for the connected wallet */
+    getProfile(): Promise<UserProfile> {
+      return fetch(`${BASE_URL}/api/profile`, { headers: headers() }).then(
+        (res) => handleResponse<UserProfile>(res),
+      );
+    },
+
+    /** PUT /api/profile — creates or updates the user profile */
+    upsertProfile(input: UpsertProfileInput): Promise<UserProfile> {
+      return fetch(`${BASE_URL}/api/profile`, {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify(input),
+      }).then((res) => handleResponse<UserProfile>(res));
+    },
+
+    // ── Wishlist ──────────────────────────────────────────────────────────────
+
+    /** GET /api/wishlist — returns wishlisted product IDs */
+    getWishlist(): Promise<string[]> {
+      return fetch(`${BASE_URL}/api/wishlist`, { headers: headers() }).then(
+        (res) => handleResponse<string[]>(res),
+      );
+    },
+
+    /** POST /api/wishlist/:productId — adds a product to the wishlist */
+    addToWishlist(productId: string): Promise<void> {
+      return fetch(`${BASE_URL}/api/wishlist/${encodeURIComponent(productId)}`, {
+        method: 'POST',
+        headers: headers(),
+      }).then((res) => handleResponse<void>(res));
+    },
+
+    /** DELETE /api/wishlist/:productId — removes a product from the wishlist */
+    removeFromWishlist(productId: string): Promise<void> {
+      return fetch(`${BASE_URL}/api/wishlist/${encodeURIComponent(productId)}`, {
+        method: 'DELETE',
+        headers: headers(),
+      }).then((res) => handleResponse<void>(res));
+    },
   };
 }
 
@@ -254,5 +374,41 @@ export const backendClient = {
 
   getOrders(walletAddress: string): Promise<Order[]> {
     return createBackendClient(walletAddress).getOrders();
+  },
+
+  getBorrowPosition(walletAddress: string): Promise<BorrowPosition> {
+    return createBackendClient(walletAddress).getBorrowPosition();
+  },
+
+  getBorrowHistory(walletAddress: string): Promise<BorrowTx[]> {
+    return createBackendClient(walletAddress).getBorrowHistory();
+  },
+
+  executeBorrow(walletAddress: string, amount: number): Promise<{ txHash: string; btcPriceUSD: number }> {
+    return createBackendClient(walletAddress).executeBorrow(amount);
+  },
+
+  executeRepay(walletAddress: string, amount: number): Promise<{ txHash: string }> {
+    return createBackendClient(walletAddress).executeRepay(amount);
+  },
+
+  getProfile(walletAddress: string): Promise<UserProfile> {
+    return createBackendClient(walletAddress).getProfile();
+  },
+
+  upsertProfile(walletAddress: string, input: UpsertProfileInput): Promise<UserProfile> {
+    return createBackendClient(walletAddress).upsertProfile(input);
+  },
+
+  getWishlist(walletAddress: string): Promise<string[]> {
+    return createBackendClient(walletAddress).getWishlist();
+  },
+
+  addToWishlist(walletAddress: string, productId: string): Promise<void> {
+    return createBackendClient(walletAddress).addToWishlist(productId);
+  },
+
+  removeFromWishlist(walletAddress: string, productId: string): Promise<void> {
+    return createBackendClient(walletAddress).removeFromWishlist(productId);
   },
 };

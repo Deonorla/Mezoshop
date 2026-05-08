@@ -48,6 +48,10 @@ export default function Borrow() {
 
   const txPending = borrowMutation.isPending || repayMutation.isPending;
   const txDone = borrowMutation.isSuccess || repayMutation.isSuccess;
+  const txError =
+    (borrowMutation.error as Error | null)?.message ??
+    (repayMutation.error as Error | null)?.message ??
+    null;
 
   function handleTx() {
     if (tab === 'borrow') {
@@ -242,6 +246,30 @@ export default function Borrow() {
               )}
             </div>
 
+            {/* Transaction error banner */}
+            {txError && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 rounded-xl p-4"
+              >
+                <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-red-300 leading-relaxed">{txError}</p>
+                </div>
+                <button
+                  onClick={() => {
+                    borrowMutation.reset();
+                    repayMutation.reset();
+                  }}
+                  className="text-red-400/60 hover:text-red-400 transition-colors text-[10px] font-black uppercase tracking-widest shrink-0"
+                >
+                  Dismiss
+                </button>
+              </motion.div>
+            )}
+
             {/* CTA */}
             <AnimatePresence mode="wait">
               {txDone ? (
@@ -259,7 +287,7 @@ export default function Borrow() {
                 <motion.button
                   key="cta"
                   onClick={handleTx}
-                  disabled={txPending || borrowAmount === 0 || collateralRatio > 75}
+                  disabled={!address || txPending || borrowAmount === 0 || collateralRatio > 75}
                   className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40"
                 >
                   {txPending ? (

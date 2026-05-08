@@ -6,8 +6,6 @@ import {
   fetchCart,
   addToCart,
   removeFromCart,
-  fetchWishlist,
-  toggleWishlist,
   fetchOrders,
   fetchBorrowPosition,
   fetchBorrowHistory,
@@ -126,16 +124,33 @@ export function useRemoveFromCart() {
 // ─── Wishlist ─────────────────────────────────────────────────────────────────
 
 export function useWishlist() {
+  const { address } = useAccount();
   return useQuery({
     queryKey: keys.wishlist(),
-    queryFn: fetchWishlist,
+    queryFn: async () => {
+      if (!address) return [];
+      const ids = await backendClient.getWishlist(address);
+      // Return as numbers for backward compatibility with existing UI
+      return ids.map(Number).filter(n => !isNaN(n));
+    },
+    enabled: !!address,
   });
 }
 
 export function useToggleWishlist() {
   const qc = useQueryClient();
+  const { address } = useAccount();
   return useMutation({
-    mutationFn: (productId: number) => toggleWishlist(productId),
+    mutationFn: async (productId: number) => {
+      if (!address) throw new Error('Wallet not connected');
+      const current = qc.getQueryData<number[]>(keys.wishlist()) ?? [];
+      if (current.includes(productId)) {
+        await backendClient.removeFromWishlist(address, String(productId));
+      } else {
+        await backendClient.addToWishlist(address, String(productId));
+      }
+      return productId;
+    },
     // Optimistic update
     onMutate: async (productId) => {
       await qc.cancelQueries({ queryKey: keys.wishlist() });

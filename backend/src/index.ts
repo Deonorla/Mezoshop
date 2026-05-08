@@ -10,6 +10,9 @@ import { cartRouter } from "./routes/cart";
 import { chatRouter } from "./routes/chat";
 import { ordersRouter } from "./routes/orders";
 import { productsRouter } from "./routes/products";
+import { profileRouter } from "./routes/profile";
+import { wishlistRouter } from "./routes/wishlist";
+import { borrowRouter, repayRouter } from "./routes/borrow";
 
 const app = new Hono();
 
@@ -23,7 +26,7 @@ app.use(
   "*",
   cors({
     origin: env.FRONTEND_ORIGIN,
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type", "X-Wallet-Address"],
     exposeHeaders: ["X-Session-Id"],
     credentials: true,
@@ -48,6 +51,16 @@ app.route("/api/products", productsRouter);
 
 // Orders
 app.route("/api/orders", ordersRouter);
+
+// Profile
+app.route("/api/profile", profileRouter);
+
+// Wishlist
+app.route("/api/wishlist", wishlistRouter);
+
+// Borrow / Lending
+app.route("/api/borrow", borrowRouter);
+app.route("/api/repay", repayRouter);
 
 // --- Start server ---
 const port = parseInt(env.PORT, 10);

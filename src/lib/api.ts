@@ -1,10 +1,12 @@
 /**
- * API layer — currently backed by mock data.
- * Swap fetch() calls here when a real backend is ready.
+ * API layer — borrow/lending functions use real backend calls.
+ * Other functions remain mock-backed until a full backend migration.
  */
 
 import { PRODUCTS } from './products';
 import type { Product } from './products';
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -143,38 +145,56 @@ export async function fetchOrders(_address?: string): Promise<Order[]> {
 
 // ─── Borrow position ──────────────────────────────────────────────────────────
 
-export async function fetchBorrowPosition(_address?: string): Promise<BorrowPosition> {
-  await delay(300);
-  const btcLocked = 0.42;
-  const btcPriceUSD = 65000;
-  const collateralValueUSD = btcLocked * btcPriceUSD;
-  const totalBorrowable = Math.floor(collateralValueUSD * 0.6);
-  const alreadyBorrowed = 2400;
-  return {
-    btcLocked,
-    btcPriceUSD,
-    collateralValueUSD,
-    totalBorrowable,
-    alreadyBorrowed,
-    available: totalBorrowable - alreadyBorrowed,
-  };
+export async function fetchBorrowPosition(address?: string): Promise<BorrowPosition> {
+  if (!address) {
+    return { btcLocked: 0, btcPriceUSD: 0, collateralValueUSD: 0, totalBorrowable: 0, alreadyBorrowed: 0, available: 0 };
+  }
+  const res = await fetch(`${BASE_URL}/api/borrow/position`, {
+    headers: { 'X-Wallet-Address': address },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
-export async function fetchBorrowHistory(_address?: string): Promise<BorrowTx[]> {
-  await delay(300);
-  return [
-    { type: 'borrow', amount: 1200, date: 'Apr 18, 2026', status: 'confirmed' },
-    { type: 'borrow', amount: 1200, date: 'Apr 10, 2026', status: 'confirmed' },
-    { type: 'repay',  amount: 500,  date: 'Apr 5, 2026',  status: 'confirmed' },
-  ];
+export async function fetchBorrowHistory(address?: string): Promise<BorrowTx[]> {
+  if (!address) return [];
+  const res = await fetch(`${BASE_URL}/api/borrow/history`, {
+    headers: { 'X-Wallet-Address': address },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
-export async function executeBorrow(amount: number, _address?: string): Promise<void> {
-  await delay(2000); // simulate tx
+export async function executeBorrow(amount: number, address?: string): Promise<void> {
+  if (!address) throw new Error('Wallet not connected');
+  const res = await fetch(`${BASE_URL}/api/borrow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': address },
+    body: JSON.stringify({ amount }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
 }
 
-export async function executeRepay(amount: number, _address?: string): Promise<void> {
-  await delay(2000);
+export async function executeRepay(amount: number, address?: string): Promise<void> {
+  if (!address) throw new Error('Wallet not connected');
+  const res = await fetch(`${BASE_URL}/api/repay`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': address },
+    body: JSON.stringify({ amount }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
 }
 
 // ─── Portfolio ────────────────────────────────────────────────────────────────

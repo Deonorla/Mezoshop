@@ -36,7 +36,7 @@ export default function Profile() {
     else { setCopiedEvm(true); setTimeout(() => setCopiedEvm(false), 2000); }
   };
 
-  const handleSave = () => { saveProfile(form); setEditing(false); };
+  const handleSave = async () => { await saveProfile(form); setEditing(false); };
 
   const profile = getProfile();
 
