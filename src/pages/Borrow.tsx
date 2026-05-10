@@ -1,19 +1,74 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Bitcoin, ShieldCheck, Zap, TrendingUp, RefreshCw, AlertTriangle, ChevronUp, ChevronDown, Wallet } from 'lucide-react';
-import { useAccount, useBalance } from 'wagmi';
-import { formatUnits } from 'viem';
+import { useAccount, useBalance, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
+import { formatUnits, parseEther } from 'viem';
 import { cn } from '@/src/lib/utils';
 import { MUSD_TESTNET_ADDRESS, MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
-import { useBorrowPosition, useBorrowHistory, useBorrow, useRepay } from '@/src/hooks/queries';
+import { useBorrowPosition, useBorrowHistory, useBorrow, useRepay, keys } from '@/src/hooks/queries';
+import { useWalletBalances } from '@/src/hooks/useWalletBalances';
+
+const LENDING_CONTRACT = '0xB3b1980CE53efcB48f1b30bA2cFdd178a6C727F0' as const;
+const DEPOSIT_ABI = [{
+  name: 'deposit',
+  type: 'function',
+  stateMutability: 'payable',
+  inputs: [],
+  outputs: [],
+}] as const;
 
 export default function Borrow() {
   const { navigate } = useAppNavigation();
-  const [borrowAmount, setBorrowAmount] = useState(1000);
-  const [tab, setTab] = useState<'borrow' | 'repay'>('borrow');
+  const [borrowAmount, setBorrowAmount] = useState(0);
+  const [tab, setTab] = useState<'lock' | 'borrow' | 'repay'>('lock');
+  const [lockAmount, setLockAmount] = useState(0);
 
   const { address } = useAccount();
+
+  // Native BTC balance on Mezo EVM (chain 31611) — this is what MetaMask shows
+  const { data: evmBtcBalance, isLoading: evmBtcLoading } = useBalance({
+    address: address as `0x${string}` | undefined,
+    chainId: MEZO_TESTNET_CHAIN_ID,
+    query: { refetchInterval: 15_000 },
+  });
+
+  // BTC wallet balances (Bitcoin network — used for display elsewhere)
+  const { btcDisplay: bitcoinNetworkDisplay } = useWalletBalances();
+
+  // Use EVM BTC balance for the deposit UI — this is what the contract receives
+  const evmBtcAmount = evmBtcBalance?.value !== undefined
+    ? Number(formatUnits(evmBtcBalance.value, 18))
+    : 0;
+  const evmBtcDisplay = evmBtcBalance?.value !== undefined
+    ? Number(formatUnits(evmBtcBalance.value, 18)).toFixed(6).replace(/\.?0+$/, '')
+    : '0';
+  // Keep a small reserve for gas (0.001 BTC)
+  const btcAvailable = Math.max(0, evmBtcAmount - 0.001);
+
+  // Deposit (Lock BTC) contract interaction
+  const { writeContract, data: depositTxHash, isPending: depositPending, reset: resetDeposit } = useWriteContract();
+  const { isLoading: depositConfirming, isSuccess: depositSuccess } = useWaitForTransactionReceipt({ hash: depositTxHash });
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (depositSuccess) {
+      queryClient.invalidateQueries({ queryKey: keys.borrowPosition(address) });
+      setTimeout(() => { setTab('borrow'); resetDeposit(); setLockAmount(0); }, 1500);
+    }
+  }, [depositSuccess]);
+
+  function handleDeposit() {
+    if (!lockAmount || lockAmount <= 0) return;
+    writeContract({
+      address: LENDING_CONTRACT,
+      abi: DEPOSIT_ABI,
+      functionName: 'deposit',
+      value: parseEther(String(lockAmount)),
+      chainId: 31611,
+    });
+  }
 
   // Real MUSD balance with 10s refetch interval (Requirement 7.3)
   const { data: musdBalanceData, isLoading: musdBalanceLoading } = useBalance({
@@ -40,6 +95,10 @@ export default function Borrow() {
   const totalBorrowable = position?.totalBorrowable ?? 0;
   const alreadyBorrowed = position?.alreadyBorrowed ?? 0;
   const available = position?.available ?? 0;
+
+  const musdUnlockable = lockAmount > 0 && btcPriceUSD > 0
+    ? Math.floor(lockAmount * btcPriceUSD * 0.6)
+    : 0;
 
   const newTotal = alreadyBorrowed + (tab === 'borrow' ? borrowAmount : -borrowAmount);
   const collateralRatio = collateralValueUSD > 0 ? Math.round((newTotal / collateralValueUSD) * 100) : 0;
@@ -147,20 +206,164 @@ export default function Borrow() {
 
             {/* Tab switcher */}
             <div className="flex bg-white/5 border border-white/10 rounded-2xl p-1 w-fit">
-              {(['borrow', 'repay'] as const).map(t => (
+              {(['lock', 'borrow', 'repay'] as const).map(t => (
                 <button
                   key={t}
-                  onClick={() => { setTab(t); setBorrowAmount(1000); }}
+                  onClick={() => { setTab(t); setBorrowAmount(0); }}
                   className={cn(
                     'px-8 py-3 rounded-xl text-[10px] font-black tracking-[0.2em] uppercase transition-all',
                     tab === t ? 'bg-white text-mezo-ink shadow-lg' : 'text-white/40 hover:text-white'
                   )}
                 >
-                  {t === 'borrow' ? 'Borrow' : 'Repay'}
+                  {t === 'lock' ? 'Lock BTC' : t === 'borrow' ? 'Borrow' : 'Repay'}
                 </button>
               ))}
             </div>
 
+            {/* ── Lock BTC tab ── */}
+            {tab === 'lock' && (
+              <>
+                {/* BTC balance display */}
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-mezo-gold/10 flex items-center justify-center shrink-0">
+                    <Bitcoin size={18} className="text-mezo-gold" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30 mb-0.5">Available BTC (Mezo EVM)</p>
+                    <p className="text-xl font-display font-black tracking-tighter text-white">
+                      {evmBtcLoading ? '...' : evmBtcDisplay} <span className="text-mezo-gold text-sm">BTC</span>
+                    </p>
+                    <p className="text-[9px] text-white/30 mt-0.5">0.001 BTC reserved for gas</p>
+                  </div>
+                </div>
+
+                {/* No BTC warning */}
+                {!evmBtcLoading && evmBtcAmount === 0 && (
+                  <div className="flex items-start gap-3 bg-mezo-gold/10 border border-mezo-gold/30 rounded-2xl p-5">
+                    <AlertTriangle size={16} className="text-mezo-gold shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-white/60 leading-relaxed">
+                      No BTC available on Mezo EVM. Get testnet BTC from <span className="text-mezo-gold">faucet.test.mezo.org</span> and add Mezo Testnet (chain 31611) to MetaMask.
+                    </p>
+                  </div>
+                )}
+
+                {/* Amount input */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Amount to Lock</p>
+                    <button
+                      onClick={() => setLockAmount(btcAvailable)}
+                      className="text-[9px] font-black tracking-widest uppercase text-mezo-gold hover:text-white transition-colors"
+                    >
+                      Max
+                    </button>
+                  </div>
+
+                  <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={btcAvailable}
+                        step={0.001}
+                        value={lockAmount || ''}
+                        placeholder="0"
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setLockAmount(isNaN(val) ? 0 : Math.max(0, val));
+                        }}
+                        className="w-full bg-transparent font-display text-5xl font-black text-white focus:outline-none tracking-tighter placeholder:text-white/20"
+                      />
+                      <p className="text-mezo-gold font-black text-sm mt-1">BTC</p>
+                    </div>
+                    <div className="flex flex-col gap-1 pb-6">
+                      <button
+                        onClick={() => setLockAmount(v => Math.round((v + 0.001) * 1e8) / 1e8)}
+                        className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
+                      >
+                        <ChevronUp size={14} />
+                      </button>
+                      <button
+                        onClick={() => setLockAmount(v => Math.max(0, Math.round((v - 0.001) * 1e8) / 1e8))}
+                        className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Over-balance warning */}
+                {lockAmount > btcAvailable && btcAvailable > 0 && (
+                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                    <AlertTriangle size={14} className="text-red-400 shrink-0" />
+                    <p className="text-[10px] text-red-300">
+                      Exceeds available balance. Max: {btcAvailable.toFixed(6)} BTC (0.001 reserved for gas)
+                    </p>
+                  </div>
+                )}
+
+                {/* Preview card */}
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+                  <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Preview</p>
+                  <div className="flex justify-between items-center">
+                    <p className="text-[11px] text-white/50">You will be able to borrow</p>
+                    <p className="font-black text-mezo-gold">
+                      {musdUnlockable > 0 ? musdUnlockable.toLocaleString() : '—'} MUSD
+                    </p>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <p className="text-[11px] text-white/50">At current BTC price</p>
+                    <p className="font-black text-white/70">
+                      {btcPriceUSD > 0 ? `$${btcPriceUSD.toLocaleString()}` : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Lock BTC CTA */}
+                <AnimatePresence mode="wait">
+                  {depositSuccess ? (
+                    <motion.div
+                      key="deposit-done"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="w-full flex items-center justify-center gap-3 bg-green-500/20 border border-green-500/30 py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase text-green-400"
+                    >
+                      <ShieldCheck size={16} />
+                      ✓ BTC Locked
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="deposit-cta"
+                      onClick={handleDeposit}
+                      disabled={!address || depositPending || depositConfirming || lockAmount <= 0 || lockAmount > btcAvailable || evmBtcAmount === 0}
+                      className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40"
+                    >
+                      {depositPending || depositConfirming ? (
+                        <>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                            className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                          />
+                          Locking...
+                        </>
+                      ) : (
+                        <>
+                          <Bitcoin size={16} />
+                          Lock {lockAmount > 0 ? lockAmount : ''} BTC
+                        </>
+                      )}
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              </>
+            )}
+
+            {/* ── Borrow / Repay tab content ── */}
+            {tab !== 'lock' && (
+            <>
             {/* Amount input */}
             <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
               <div className="flex justify-between items-center">
@@ -175,23 +378,25 @@ export default function Borrow() {
                 </button>
               </div>
 
-              {/* Big number input */}
+              {/* Big number input — free typing, validated on submit */}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
                   <input
                     type="number"
-                    value={borrowAmount}
-                    onChange={e => setBorrowAmount(Math.max(0, Math.min(
-                      tab === 'borrow' ? available : alreadyBorrowed,
-                      Number(e.target.value)
-                    )))}
-                    className="w-full bg-transparent font-display text-5xl font-black text-white focus:outline-none tracking-tighter"
+                    min={0}
+                    value={borrowAmount || ''}
+                    placeholder="0"
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      setBorrowAmount(isNaN(val) ? 0 : Math.max(0, val));
+                    }}
+                    className="w-full bg-transparent font-display text-5xl font-black text-white focus:outline-none tracking-tighter placeholder:text-white/20"
                   />
                   <p className="text-mezo-gold font-black text-sm mt-1">MUSD</p>
                 </div>
                 <div className="flex flex-col gap-1 pb-6">
                   <button
-                    onClick={() => setBorrowAmount(v => Math.min(tab === 'borrow' ? available : alreadyBorrowed, v + 100))}
+                    onClick={() => setBorrowAmount(v => v + 100)}
                     className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
                   >
                     <ChevronUp size={14} />
@@ -205,18 +410,18 @@ export default function Borrow() {
                 </div>
               </div>
 
-              {/* Slider */}
+              {/* Slider — only useful when there's an available amount */}
               <input
                 type="range"
                 min={0}
-                max={tab === 'borrow' ? available : alreadyBorrowed}
+                max={Math.max(tab === 'borrow' ? available : alreadyBorrowed, borrowAmount, 1)}
                 value={borrowAmount}
                 onChange={e => setBorrowAmount(Number(e.target.value))}
                 className="w-full accent-mezo-gold"
               />
               <div className="flex justify-between text-[9px] font-black uppercase tracking-widest text-white/20">
                 <span>0</span>
-                <span>{(tab === 'borrow' ? available : alreadyBorrowed).toLocaleString()} MUSD</span>
+                <span>{(tab === 'borrow' ? available : alreadyBorrowed).toLocaleString()} MUSD max</span>
               </div>
             </div>
 
@@ -245,6 +450,14 @@ export default function Borrow() {
                 </div>
               )}
             </div>
+
+            {/* Exceeds limit warning */}
+            {tab === 'borrow' && borrowAmount > available && available > 0 && (
+              <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                <AlertTriangle size={14} className="text-red-400 shrink-0" />
+                <p className="text-[10px] text-red-300">Amount exceeds your available limit of {available.toLocaleString()} MUSD</p>
+              </div>
+            )}
 
             {/* Transaction error banner */}
             {txError && (
@@ -287,7 +500,7 @@ export default function Borrow() {
                 <motion.button
                   key="cta"
                   onClick={handleTx}
-                  disabled={!address || txPending || borrowAmount === 0 || collateralRatio > 75}
+                  disabled={!address || txPending || borrowAmount === 0 || (tab === 'borrow' && borrowAmount > available) || (tab === 'repay' && borrowAmount > alreadyBorrowed) || collateralRatio > 75}
                   className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40"
                 >
                   {txPending ? (
@@ -310,6 +523,8 @@ export default function Borrow() {
                 </motion.button>
               )}
             </AnimatePresence>
+            </>
+            )}
           </div>
 
           {/* ── Right: Info + History ── */}

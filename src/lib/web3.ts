@@ -18,6 +18,10 @@ export const wagmiConfig = getConfig({
   appName: 'Mezoshop',
   walletConnectProjectId: projectId,
   mezoNetwork: isMainnet ? 'mainnet' : 'testnet',
+  // Disable wagmi's built-in reconnect-on-mount — ProtectedRoute handles
+  // reconnection manually so only the stored connector is reconnected,
+  // preventing Xverse from opening when MetaMask is the active wallet.
+  reconnectOnMount: false,
   wallets: [
     {
       groupName: 'Bitcoin',

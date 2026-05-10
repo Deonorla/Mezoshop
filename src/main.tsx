@@ -12,11 +12,21 @@ import { router } from './router.tsx';
 import '@rainbow-me/rainbowkit/styles.css';
 import './index.css';
 
-// Eagerly call setup() on all orangekit connectors so getChainId() works
-// synchronously when RainbowKit calls it before connect()
+// Eagerly call setup() only on the previously connected connector
+// so getChainId() works synchronously when RainbowKit calls it before connect().
+// Calling setup() on ALL connectors triggers wallet popups (e.g. Xverse)
+// even when the user connected with a different wallet (e.g. MetaMask).
+const storedConnectorId = localStorage.getItem('mezo_connector_id');
 wagmiConfig.connectors.forEach((connector: any) => {
-  if (typeof connector.setup === 'function') {
-    connector.setup().catch(() => {});
+  const isStored = storedConnectorId
+    ? connector.id === storedConnectorId
+    : false;
+  // Always setup non-Bitcoin connectors (MetaMask, WalletConnect) — they don't open popups
+  const isOrangeKit = connector.id?.startsWith('orangekit');
+  if (!isOrangeKit || isStored) {
+    if (typeof connector.setup === 'function') {
+      connector.setup().catch(() => {});
+    }
   }
 });
 

@@ -9,11 +9,20 @@ interface BtcBalance {
 }
 
 async function fetchBtcBalance(connector: any): Promise<BtcBalance> {
-  if (!connector || typeof connector.getBitcoinProvider !== 'function') {
+  // Only attempt Bitcoin balance fetch for orangekit connectors (Xverse, OKX, Unisat)
+  // MetaMask and other EVM wallets don't have a Bitcoin provider
+  if (!connector || connector.type !== 'orangekit') {
     return { confirmed: 0, unconfirmed: 0, total: 0 };
   }
-  const provider = connector.getBitcoinProvider();
-  return provider.getBalance();
+  if (typeof connector.getBitcoinProvider !== 'function') {
+    return { confirmed: 0, unconfirmed: 0, total: 0 };
+  }
+  try {
+    const provider = connector.getBitcoinProvider();
+    return provider.getBalance();
+  } catch {
+    return { confirmed: 0, unconfirmed: 0, total: 0 };
+  }
 }
 
 export function useWalletBalances() {
