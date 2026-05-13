@@ -59,26 +59,45 @@ interface InlineProductCardProps {
 }
 
 function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCardProps) {
-  const { navigate } = useAppNavigation();
-  const [activeImg, setActiveImg] = useState(0);
+  const colors = product.colors ?? [];
+
+  // Build a color→imageIndex map by scanning image filenames for color keywords
+  // Falls back to even distribution if no filename match found
+  function getImageIndexForColor(color: string): number {
+    const colorLower = color.toLowerCase().replace(/\s+/g, '_');
+    // Try to find an image whose filename contains the color name
+    const idx = product.images.findIndex(img => {
+      const filename = img.toLowerCase();
+      return filename.includes(colorLower) ||
+        filename.includes(color.toLowerCase()) ||
+        // Handle common color aliases
+        (colorLower === 'burgundy' && filename.includes('burgundy')) ||
+        (colorLower === 'light_blue' && (filename.includes('light_blue') || filename.includes('lightblue'))) ||
+        (colorLower === 'dark_gray' && (filename.includes('dark_gray') || filename.includes('darkgray')));
+    });
+    if (idx !== -1) return idx;
+    // Fallback: even distribution
+    const colorIdx = colors.indexOf(color);
+    const imagesPerColor = colors.length > 0 ? Math.floor(product.images.length / colors.length) : product.images.length;
+    return colorIdx * imagesPerColor;
+  }
+
   const [selectedColor, setSelectedColor] = useState<string | null>(
-    product.colors && product.colors.length > 0 ? product.colors[0] : null,
+    colors.length > 0 ? colors[0] : null,
+  );
+  const [activeImg, setActiveImg] = useState(() =>
+    colors.length > 0 ? getImageIndexForColor(colors[0]) : 0
   );
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
-  // Map colors to image indices: images are grouped by color in order
-  // e.g. 2 colors × 2 images each → color[0] → images[0,1], color[1] → images[2,3]
-  const colors = product.colors ?? [];
+  // How many images belong to the currently selected color
   const imagesPerColor = colors.length > 0 ? Math.floor(product.images.length / colors.length) : product.images.length;
+  const currentColorStartIdx = selectedColor ? getImageIndexForColor(selectedColor) : 0;
 
-  function getColorImageIndex(colorIndex: number) {
-    return colorIndex * imagesPerColor;
-  }
-
-  function handleColorSelect(color: string, colorIndex: number) {
+  function handleColorSelect(color: string) {
     setSelectedColor(color);
-    setActiveImg(getColorImageIndex(colorIndex));
+    setActiveImg(getImageIndexForColor(color));
   }
 
   async function handleAddToCart() {
@@ -122,7 +141,7 @@ function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCa
         {imagesPerColor > 1 && (
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
             {Array.from({ length: Math.min(imagesPerColor, 4) }).map((_, i) => {
-              const imgIdx = (colors.length > 0 ? getColorImageIndex(colors.indexOf(selectedColor ?? colors[0])) : 0) + i;
+              const imgIdx = currentColorStartIdx + i;
               return (
                 <button
                   key={i}
@@ -164,11 +183,11 @@ function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCa
               {selectedColor ?? 'Color'}
             </p>
             <div className="flex flex-wrap gap-1">
-              {colors.map((color, i) => (
+              {colors.map((color) => (
                 <button
                   key={color}
                   title={color}
-                  onClick={() => handleColorSelect(color, i)}
+                  onClick={() => handleColorSelect(color)}
                   className={cn(
                     'px-2 py-0.5 rounded-full text-[8px] font-bold border transition-all',
                     selectedColor === color
@@ -242,7 +261,7 @@ export default function Dashboard() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { address } = useAccount();
-  const { messages, isStreaming, error, sendMessage, reset } = useChat(address);
+  const { messages, isStreaming, error, sendMessage, reset, recentSearches } = useChat(address);
   const queryClient = useQueryClient();
 
   const { getProfile } = useAuth();
@@ -567,14 +586,16 @@ export default function Dashboard() {
           {/* Recent searches */}
           <div className="space-y-4">
             <h5 className="text-[10px] font-black uppercase tracking-widest text-mezo-ink">Recent Searches</h5>
-            {['Luxury coats', 'Designer bags', 'Rolex watches'].map((s, i) => (
+            {recentSearches.length === 0 ? (
+              <p className="text-[10px] text-mezo-ink/20 font-black uppercase tracking-widest">No searches yet</p>
+            ) : recentSearches.map((s, i) => (
               <button
                 key={i}
                 onClick={() => handleSendMessage(s)}
                 className="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-mezo-bg transition-colors group"
               >
                 <Search size={12} className="text-mezo-ink/20 group-hover:text-mezo-ink transition-colors" />
-                <span className="text-[11px] font-bold text-mezo-ink/50 group-hover:text-mezo-ink transition-colors">{s}</span>
+                <span className="text-[11px] font-bold text-mezo-ink/50 group-hover:text-mezo-ink transition-colors truncate">{s}</span>
               </button>
             ))}
           </div>
