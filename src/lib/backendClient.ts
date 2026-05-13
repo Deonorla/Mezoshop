@@ -114,10 +114,11 @@ export interface BorrowPosition {
 }
 
 export interface BorrowTx {
-  type: 'borrow' | 'repay';
+  type: 'borrow' | 'repay' | 'lock';
   amount: number;
   date: string;
   status: string;
+  txHash: string;
 }
 
 // ─── Error class ──────────────────────────────────────────────────────────────
@@ -260,6 +261,15 @@ export function createBackendClient(walletAddress: string) {
 
     // ── Borrow / Lending ──────────────────────────────────────────────────────
 
+    /** POST /api/borrow/lock — records a BTC lock transaction */
+    recordLock(txHash: string, amountBtc: number): Promise<{ recorded: boolean }> {
+      return fetch(`${BASE_URL}/api/borrow/lock`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ txHash, amountBtc }),
+      }).then((res) => handleResponse<{ recorded: boolean }>(res));
+    },
+
     /** GET /api/borrow/position — returns the lending position for the connected wallet */
     getBorrowPosition(): Promise<BorrowPosition> {
       return fetch(`${BASE_URL}/api/borrow/position`, { headers: headers() }).then(
@@ -374,6 +384,10 @@ export const backendClient = {
 
   getOrders(walletAddress: string): Promise<Order[]> {
     return createBackendClient(walletAddress).getOrders();
+  },
+
+  recordLock(walletAddress: string, txHash: string, amountBtc: number): Promise<{ recorded: boolean }> {
+    return createBackendClient(walletAddress).recordLock(txHash, amountBtc);
   },
 
   getBorrowPosition(walletAddress: string): Promise<BorrowPosition> {

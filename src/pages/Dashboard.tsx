@@ -59,6 +59,7 @@ interface InlineProductCardProps {
 }
 
 function InlineProductCard({ product, onAddToCart, onNavigate }: InlineProductCardProps) {
+  const { navigate } = useAppNavigation();
   const [activeImg, setActiveImg] = useState(0);
   const [selectedColor, setSelectedColor] = useState<string | null>(
     product.colors && product.colors.length > 0 ? product.colors[0] : null,
@@ -551,14 +552,14 @@ export default function Dashboard() {
                 <span className="text-mezo-gold">{balancesLoading ? '...' : `${musdFormatted} MUSD`}</span>
               </div>
               <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                <div className="h-full w-2/5 bg-mezo-gold rounded-full" />
+                <div className="h-full bg-mezo-gold rounded-full" style={{ width: '100%' }} />
               </div>
               <div className="flex justify-between text-[9px] font-black uppercase tracking-widest">
                 <span className="text-white/40">Available</span>
-                <span className="text-white/60">22,400 MUSD</span>
+                <span className="text-white/60">{balancesLoading ? '...' : `${musdFormatted} MUSD`}</span>
               </div>
             </div>
-            <button className="w-full bg-mezo-gold py-3 rounded-xl text-[9px] uppercase font-black tracking-widest hover:bg-white hover:text-mezo-ink transition-all relative z-10">
+            <button onClick={() => navigate('/borrow')} className="w-full bg-mezo-gold py-3 rounded-xl text-[9px] uppercase font-black tracking-widest hover:bg-white hover:text-mezo-ink transition-all relative z-10">
               Borrow More MUSD
             </button>
           </div>

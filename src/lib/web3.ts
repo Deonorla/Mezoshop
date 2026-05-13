@@ -39,5 +39,16 @@ export const wagmiConfig = getConfig({
   ],
 });
 
-export const queryClient = new QueryClient();
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Keep cache alive for 5 minutes after a component unmounts.
+      // This prevents skeleton flashes when navigating back to a page
+      // that already fetched its data.
+      gcTime: 5 * 60 * 1000,
+      // Don't refetch on window focus — reduces unnecessary network calls
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 export { mezoTestnet };

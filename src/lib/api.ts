@@ -41,10 +41,11 @@ export interface BorrowPosition {
 }
 
 export interface BorrowTx {
-  type: 'borrow' | 'repay';
+  type: 'borrow' | 'repay' | 'lock';
   amount: number;
   date: string;
   status: string;
+  txHash?: string;
 }
 
 export interface PortfolioAsset {

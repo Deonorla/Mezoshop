@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import {
   fetchProducts,
@@ -197,7 +197,11 @@ export function useBorrowPosition() {
   return useQuery({
     queryKey: keys.borrowPosition(address),
     queryFn: () => fetchBorrowPosition(address),
-    refetchInterval: 30_000, // refresh every 30s
+    staleTime: 20_000,
+    gcTime: 5 * 60 * 1000,
+    refetchInterval: 30_000,
+    enabled: !!address,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -206,7 +210,10 @@ export function useBorrowHistory() {
   return useQuery({
     queryKey: keys.borrowHistory(address),
     queryFn: () => fetchBorrowHistory(address),
+    staleTime: 30_000,
+    gcTime: 5 * 60 * 1000,
     enabled: !!address,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -216,8 +223,9 @@ export function useBorrow() {
   return useMutation({
     mutationFn: (amount: number) => executeBorrow(amount, address),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.borrowPosition(address) });
-      qc.invalidateQueries({ queryKey: keys.borrowHistory(address) });
+      // refetchQueries forces an immediate fetch rather than just marking stale
+      qc.refetchQueries({ queryKey: keys.borrowPosition(address) });
+      qc.refetchQueries({ queryKey: keys.borrowHistory(address) });
     },
   });
 }
@@ -228,8 +236,8 @@ export function useRepay() {
   return useMutation({
     mutationFn: (amount: number) => executeRepay(amount, address),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.borrowPosition(address) });
-      qc.invalidateQueries({ queryKey: keys.borrowHistory(address) });
+      qc.refetchQueries({ queryKey: keys.borrowPosition(address) });
+      qc.refetchQueries({ queryKey: keys.borrowHistory(address) });
     },
   });
 }

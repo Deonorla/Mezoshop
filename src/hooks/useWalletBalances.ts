@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useAccount } from 'wagmi';
+import { useAccount, useBalance } from 'wagmi';
 import { useTokensBalances } from '@mezo-org/passport';
+import { formatUnits } from 'viem';
+import { MUSD_TESTNET_ADDRESS, MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 
 interface BtcBalance {
   confirmed: number;
@@ -8,9 +10,8 @@ interface BtcBalance {
   total: number;
 }
 
-async function fetchBtcBalance(connector: any): Promise<BtcBalance> {
-  // Only attempt Bitcoin balance fetch for orangekit connectors (Xverse, OKX, Unisat)
-  // MetaMask and other EVM wallets don't have a Bitcoin provider
+async function fetchNativeBtcBalance(connector: any): Promise<BtcBalance> {
+  // Only for orangekit connectors (Xverse, OKX, Unisat) — they have a Bitcoin provider
   if (!connector || connector.type !== 'orangekit') {
     return { confirmed: 0, unconfirmed: 0, total: 0 };
   }
@@ -26,35 +27,84 @@ async function fetchBtcBalance(connector: any): Promise<BtcBalance> {
 }
 
 export function useWalletBalances() {
-  const { isConnected, connector } = useAccount();
+  const { isConnected, connector, address } = useAccount();
 
-  // BTC balance via TanStack Query — cached, deduped, auto-refetches every 30s
-  const { data: btcBalance, isLoading: btcLoading } = useQuery({
+  const isOrangeKit = connector?.type === 'orangekit';
+
+  // ── Bitcoin network BTC (Xverse/orangekit only) ───────────────────────────
+  const { data: nativeBtcBalance, isLoading: nativeBtcLoading } = useQuery({
     queryKey: ['btcBalance', connector?.uid],
-    queryFn: () => fetchBtcBalance(connector),
-    enabled: isConnected && !!connector,
+    queryFn: () => fetchNativeBtcBalance(connector),
+    enabled: isConnected && !!connector && isOrangeKit,
     refetchInterval: 30_000,
     staleTime: 15_000,
   });
 
-  // MUSD on-chain balance via passport (already TanStack Query internally)
-  const { data: tokenBalances, isLoading: tokensLoading } = useTokensBalances({
+  // ── Mezo EVM native BTC (MetaMask/EVM wallets) ────────────────────────────
+  const { data: evmBtcBalance, isLoading: evmBtcLoading } = useBalance({
+    address: address as `0x${string}` | undefined,
+    chainId: MEZO_TESTNET_CHAIN_ID,
+    query: {
+      enabled: isConnected && !isOrangeKit,
+      refetchInterval: 30_000,
+      staleTime: 15_000,
+    },
+  });
+
+  // ── MUSD balance ──────────────────────────────────────────────────────────
+  // For orangekit: use Passport SDK's useTokensBalances (reads from Mezo EVM via smart account)
+  // For EVM wallets: use wagmi useBalance with the MUSD token address
+  const { data: passportTokenBalances, isLoading: passportTokensLoading } = useTokensBalances({
     tokens: ['MUSD'],
   });
 
-  const btcSatoshis = btcBalance?.total ?? 0;
-  const btcDisplay = (btcSatoshis / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0';
+  const { data: evmMusdBalance, isLoading: evmMusdLoading } = useBalance({
+    address: address as `0x${string}` | undefined,
+    token: MUSD_TESTNET_ADDRESS as `0x${string}`,
+    chainId: MEZO_TESTNET_CHAIN_ID,
+    query: {
+      enabled: isConnected && !isOrangeKit,
+      refetchInterval: 15_000,
+      staleTime: 10_000,
+    },
+  });
 
-  const musdRaw = tokenBalances?.MUSD;
-  const musdFormatted = musdRaw
-    ? parseFloat(musdRaw.formatted).toLocaleString(undefined, { maximumFractionDigits: 2 })
-    : '0';
+  // ── Derived values ────────────────────────────────────────────────────────
+
+  // BTC display — satoshis for orangekit, wei for EVM
+  const btcSatoshis = isOrangeKit ? (nativeBtcBalance?.total ?? 0) : 0;
+  const btcDisplay = isOrangeKit
+    ? ((btcSatoshis / 1e8).toFixed(8).replace(/\.?0+$/, '') || '0')
+    : evmBtcBalance?.value !== undefined
+      ? Number(formatUnits(evmBtcBalance.value, 18)).toFixed(6).replace(/\.?0+$/, '') || '0'
+      : '0';
+
+  // MUSD display
+  const musdRaw = isOrangeKit ? passportTokenBalances?.MUSD : undefined;
+  const musdFormatted = isOrangeKit
+    ? (musdRaw ? parseFloat(musdRaw.formatted).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '0')
+    : evmMusdBalance?.value !== undefined
+      ? Number(formatUnits(evmMusdBalance.value, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : '0';
+
+  const isLoading = isOrangeKit
+    ? (nativeBtcLoading || passportTokensLoading)
+    : (evmBtcLoading || evmMusdLoading);
 
   return {
-    btcSatoshis,
-    btcDisplay,
-    musdFormatted,
-    musdRaw,
-    isLoading: btcLoading || tokensLoading,
+    // BTC
+    btcSatoshis,           // satoshis (orangekit) or 0 (EVM)
+    btcDisplay,            // formatted string for display
+    isOrangeKit,           // true = Bitcoin wallet, false = EVM wallet
+
+    // MUSD
+    musdFormatted,         // formatted string for display
+    musdRaw,               // raw Passport token data (orangekit only)
+
+    // EVM-specific (MetaMask)
+    evmBtcBalance,         // raw wagmi balance data
+    evmMusdBalance,        // raw wagmi MUSD balance data
+
+    isLoading,
   };
 }

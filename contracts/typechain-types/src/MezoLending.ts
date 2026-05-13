@@ -28,6 +28,8 @@ export interface MezoLendingInterface extends Interface {
     nameOrSignature:
       | "LIQ_THRESHOLD"
       | "LTV_CAP"
+      | "admin"
+      | "adminWithdrawMUSD"
       | "borrow"
       | "collateral"
       | "debt"
@@ -54,9 +56,14 @@ export interface MezoLendingInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(functionFragment: "LTV_CAP", values?: undefined): string;
+  encodeFunctionData(functionFragment: "admin", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "adminWithdrawMUSD",
+    values: [BigNumberish, AddressLike]
+  ): string;
   encodeFunctionData(
     functionFragment: "borrow",
-    values: [BigNumberish, BigNumberish]
+    values: [BigNumberish, BigNumberish, AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "collateral",
@@ -73,7 +80,10 @@ export interface MezoLendingInterface extends Interface {
     values: [AddressLike, BigNumberish]
   ): string;
   encodeFunctionData(functionFragment: "musd", values?: undefined): string;
-  encodeFunctionData(functionFragment: "repay", values: [BigNumberish]): string;
+  encodeFunctionData(
+    functionFragment: "repay",
+    values: [BigNumberish, AddressLike]
+  ): string;
   encodeFunctionData(
     functionFragment: "treasuryBalance",
     values?: undefined
@@ -88,6 +98,11 @@ export interface MezoLendingInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "LTV_CAP", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "admin", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "adminWithdrawMUSD",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "borrow", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "collateral", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "debt", data: BytesLike): Result;
@@ -239,8 +254,20 @@ export interface MezoLending extends BaseContract {
 
   LTV_CAP: TypedContractMethod<[], [bigint], "view">;
 
+  admin: TypedContractMethod<[], [string], "view">;
+
+  adminWithdrawMUSD: TypedContractMethod<
+    [amount: BigNumberish, to: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
   borrow: TypedContractMethod<
-    [musdAmount: BigNumberish, btcPriceUSD: BigNumberish],
+    [
+      musdAmount: BigNumberish,
+      btcPriceUSD: BigNumberish,
+      recipient: AddressLike
+    ],
     [void],
     "nonpayable"
   >;
@@ -265,7 +292,11 @@ export interface MezoLending extends BaseContract {
 
   musd: TypedContractMethod<[], [string], "view">;
 
-  repay: TypedContractMethod<[musdAmount: BigNumberish], [void], "nonpayable">;
+  repay: TypedContractMethod<
+    [musdAmount: BigNumberish, borrower: AddressLike],
+    [void],
+    "nonpayable"
+  >;
 
   treasuryBalance: TypedContractMethod<[], [bigint], "view">;
 
@@ -286,9 +317,23 @@ export interface MezoLending extends BaseContract {
     nameOrSignature: "LTV_CAP"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
+    nameOrSignature: "admin"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "adminWithdrawMUSD"
+  ): TypedContractMethod<
+    [amount: BigNumberish, to: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
     nameOrSignature: "borrow"
   ): TypedContractMethod<
-    [musdAmount: BigNumberish, btcPriceUSD: BigNumberish],
+    [
+      musdAmount: BigNumberish,
+      btcPriceUSD: BigNumberish,
+      recipient: AddressLike
+    ],
     [void],
     "nonpayable"
   >;
@@ -320,7 +365,11 @@ export interface MezoLending extends BaseContract {
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "repay"
-  ): TypedContractMethod<[musdAmount: BigNumberish], [void], "nonpayable">;
+  ): TypedContractMethod<
+    [musdAmount: BigNumberish, borrower: AddressLike],
+    [void],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "treasuryBalance"
   ): TypedContractMethod<[], [bigint], "view">;

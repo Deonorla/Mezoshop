@@ -15,6 +15,7 @@ interface DisplayOrder {
   cost: string;
   type: string;
   img: string;
+  txHash: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ function toDisplayOrder(order: Order): DisplayOrder {
     cost: `${order.totalMusd.toLocaleString()} MUSD`,
     type: 'MUSD Purchase',
     img: PLACEHOLDER_IMG,
+    txHash: order.txHash,
   };
 }
 
@@ -129,7 +131,19 @@ export default function Orders() {
                         <span className="text-[10px] font-black uppercase tracking-widest text-mezo-gold mb-1 block italic">{order.id}</span>
                         <h3 className="font-display text-2xl font-black tracking-tighter text-mezo-ink italic">{order.item}</h3>
                       </div>
-                      <button className="p-2 text-mezo-ink/20 hover:text-mezo-ink transition-colors"><MoreVertical size={20} /></button>
+                      <div className="flex items-center gap-2">
+                        {order.txHash && (
+                          <a
+                            href={`https://explorer.test.mezo.org/tx/${order.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[9px] font-black uppercase tracking-widest text-mezo-gold hover:text-mezo-ink transition-colors border border-mezo-gold/30 px-3 py-1.5 rounded-lg hover:bg-mezo-gold/10"
+                          >
+                            View Tx →
+                          </a>
+                        )}
+                        <button className="p-2 text-mezo-ink/20 hover:text-mezo-ink transition-colors"><MoreVertical size={20} /></button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-8">

@@ -51,6 +51,15 @@ contract MezoLending {
         uint256 debtCleared
     );
 
+    // ── Admin ──────────────────────────────────────────────────────────────────
+
+    address public immutable admin;
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "MezoLending: not admin");
+        _;
+    }
+
     // ── Constructor ────────────────────────────────────────────────────────────
 
     /**
@@ -61,9 +70,19 @@ contract MezoLending {
     constructor(address _musd, uint256 initialTreasury) {
         require(_musd != address(0), "MezoLending: zero MUSD address");
         musd = IERC20(_musd);
+        admin = msg.sender;
         if (initialTreasury > 0) {
             musd.safeTransferFrom(msg.sender, address(this), initialTreasury);
         }
+    }
+
+    /**
+     * @notice Emergency: admin can withdraw MUSD from the treasury.
+     * Only callable by the deployer address.
+     */
+    function adminWithdrawMUSD(uint256 amount, address to) external onlyAdmin {
+        require(to != address(0), "MezoLending: zero address");
+        musd.safeTransfer(to, amount);
     }
 
     // ── External functions ─────────────────────────────────────────────────────
@@ -82,15 +101,16 @@ contract MezoLending {
      * @notice Borrow MUSD against deposited BTC collateral.
      * @param musdAmount Amount of MUSD to borrow (18 decimals)
      * @param btcPriceUSD Current BTC price in USD with 8 decimal places
-     *        e.g. $95,000 → 9_500_000_000_000
+     * @param recipient Address to receive the borrowed MUSD (the actual user)
      */
-    function borrow(uint256 musdAmount, uint256 btcPriceUSD) external {
+    function borrow(uint256 musdAmount, uint256 btcPriceUSD, address recipient) external {
         require(musdAmount > 0, "MezoLending: borrow amount must be > 0");
-        require(collateral[msg.sender] > 0, "MezoLending: no collateral deposited");
+        require(collateral[recipient] > 0, "MezoLending: no collateral deposited");
         require(btcPriceUSD > 0, "MezoLending: invalid BTC price");
+        require(recipient != address(0), "MezoLending: zero recipient");
 
-        uint256 collateralUSD = _collateralUSD(msg.sender, btcPriceUSD);
-        uint256 newDebt = debt[msg.sender] + musdAmount;
+        uint256 collateralUSD = _collateralUSD(recipient, btcPriceUSD);
+        uint256 newDebt = debt[recipient] + musdAmount;
 
         require(
             newDebt * 100 <= collateralUSD * LTV_CAP,
@@ -101,25 +121,28 @@ contract MezoLending {
             "MezoLending: insufficient treasury balance"
         );
 
-        debt[msg.sender] = newDebt;
-        musd.safeTransfer(msg.sender, musdAmount);
+        debt[recipient] = newDebt;
+        musd.safeTransfer(recipient, musdAmount);
 
-        emit Borrowed(msg.sender, musdAmount, btcPriceUSD);
+        emit Borrowed(recipient, musdAmount, btcPriceUSD);
     }
 
     /**
-     * @notice Repay MUSD debt.
-     * Caller must have approved this contract for at least musdAmount MUSD.
+     * @notice Repay MUSD debt on behalf of a user.
+     * The signer (backend) transfers MUSD from itself back to the treasury
+     * and reduces the specified user's debt.
      * @param musdAmount Amount of MUSD to repay (18 decimals)
+     * @param borrower The user whose debt is being repaid
      */
-    function repay(uint256 musdAmount) external {
+    function repay(uint256 musdAmount, address borrower) external {
         require(musdAmount > 0, "MezoLending: repay amount must be > 0");
-        require(debt[msg.sender] >= musdAmount, "MezoLending: repay exceeds outstanding debt");
+        require(debt[borrower] >= musdAmount, "MezoLending: repay exceeds outstanding debt");
+        require(borrower != address(0), "MezoLending: zero borrower");
 
-        debt[msg.sender] -= musdAmount;
+        debt[borrower] -= musdAmount;
         musd.safeTransferFrom(msg.sender, address(this), musdAmount);
 
-        emit Repaid(msg.sender, musdAmount);
+        emit Repaid(borrower, musdAmount);
     }
 
     /**

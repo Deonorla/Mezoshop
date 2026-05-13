@@ -9,6 +9,34 @@ export const repayRouter = new Hono<{ Variables: WalletAuthVariables }>();
 borrowRouter.use("*", walletAuth);
 repayRouter.use("*", walletAuth);
 
+// POST /api/borrow/lock — record a BTC lock (deposit) transaction
+borrowRouter.post("/lock", async (c) => {
+  const walletAddress = c.get("walletAddress");
+
+  let body: { txHash?: unknown; amountBtc?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.txHash || typeof body.txHash !== "string") {
+    return c.json({ error: "txHash is required" }, 400);
+  }
+  const amountBtc = Number(body.amountBtc);
+  if (isNaN(amountBtc) || amountBtc <= 0) {
+    return c.json({ error: "amountBtc must be a positive number" }, 400);
+  }
+
+  try {
+    borrowService.recordLock(walletAddress, amountBtc, body.txHash);
+    return c.json({ recorded: true }, 200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to record lock";
+    return c.json({ error: message }, 500);
+  }
+});
+
 // GET /api/borrow/position — return on-chain position + derived fields
 borrowRouter.get("/position", async (c) => {
   const walletAddress = c.get("walletAddress");

@@ -36,6 +36,7 @@ const LENDING_ABI = [
     inputs: [
       { name: "musdAmount", type: "uint256" },
       { name: "btcPriceUSD", type: "uint256" },
+      { name: "recipient", type: "address" },
     ],
     outputs: [],
   },
@@ -43,7 +44,10 @@ const LENDING_ABI = [
     name: "repay",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [{ name: "musdAmount", type: "uint256" }],
+    inputs: [
+      { name: "musdAmount", type: "uint256" },
+      { name: "borrower", type: "address" },
+    ],
     outputs: [],
   },
 ] as const;
@@ -60,10 +64,11 @@ export interface BorrowPosition {
 }
 
 export interface BorrowTx {
-  type: "borrow" | "repay";
+  type: "borrow" | "repay" | "lock";
   amount: number;
   date: string;
   status: string;
+  txHash: string;
 }
 
 interface LendingTxRow {
@@ -170,7 +175,7 @@ class BorrowService {
       address: contractAddress,
       abi: LENDING_ABI,
       functionName: "borrow",
-      args: [musdWei, btcPriceScaled],
+      args: [musdWei, btcPriceScaled, walletAddress as `0x${string}`],
     });
 
     await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -204,7 +209,7 @@ class BorrowService {
       address: contractAddress,
       abi: LENDING_ABI,
       functionName: "repay",
-      args: [musdWei],
+      args: [musdWei, walletAddress as `0x${string}`],
     });
 
     await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -221,7 +226,20 @@ class BorrowService {
   }
 
   /**
-   * Returns borrow/repay history for a wallet from SQLite, newest first.
+   * Records a BTC lock (deposit) transaction in SQLite.
+   * Called by the frontend after the deposit tx is confirmed on-chain.
+   */
+  recordLock(walletAddress: string, amountBtc: number, txHash: string): void {
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    db.query<void, [string, string, number, string, string]>(
+      `INSERT OR IGNORE INTO lending_transactions (id, wallet_address, type, amount_musd, tx_hash, created_at)
+       VALUES (?, ?, 'lock', ?, ?, ?)`
+    ).run(id, walletAddress, amountBtc, txHash, createdAt);
+  }
+
+  /**
+   * Returns borrow/repay/lock history for a wallet from SQLite, newest first.
    */
   getHistory(walletAddress: string): BorrowTx[] {
     const rows = db
@@ -233,10 +251,11 @@ class BorrowService {
       .all(walletAddress);
 
     return rows.map((row) => ({
-      type: row.type as "borrow" | "repay",
+      type: row.type as "borrow" | "repay" | "lock",
       amount: row.amount_musd,
       date: row.created_at,
       status: row.status,
+      txHash: row.tx_hash,
     }));
   }
 }

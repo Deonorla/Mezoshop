@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowLeft, Bitcoin, ShieldCheck, Zap, TrendingUp, RefreshCw, AlertTriangle, ChevronUp, ChevronDown, Wallet } from 'lucide-react';
+import { ArrowLeft, Bitcoin, ShieldCheck, Zap, TrendingUp, RefreshCw, AlertTriangle, ChevronUp, ChevronDown, Wallet, ExternalLink, ArrowRight } from 'lucide-react';
 import { useAccount, useBalance, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatUnits, parseEther } from 'viem';
@@ -9,8 +9,9 @@ import { MUSD_TESTNET_ADDRESS, MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useBorrowPosition, useBorrowHistory, useBorrow, useRepay, keys } from '@/src/hooks/queries';
 import { useWalletBalances } from '@/src/hooks/useWalletBalances';
+import { backendClient } from '@/src/lib/backendClient';
 
-const LENDING_CONTRACT = '0xB3b1980CE53efcB48f1b30bA2cFdd178a6C727F0' as const;
+const LENDING_CONTRACT = '0xd00867f1Fe750C4aE5391949c937Dbb5eD5CC976' as const;
 const DEPOSIT_ABI = [{
   name: 'deposit',
   type: 'function',
@@ -24,28 +25,39 @@ export default function Borrow() {
   const [borrowAmount, setBorrowAmount] = useState(0);
   const [tab, setTab] = useState<'lock' | 'borrow' | 'repay'>('lock');
   const [lockAmount, setLockAmount] = useState(0);
+  const [lockInputRaw, setLockInputRaw] = useState('');
 
-  const { address } = useAccount();
+  const { address, connector } = useAccount();
 
-  // Native BTC balance on Mezo EVM (chain 31611) — this is what MetaMask shows
+  // Detect wallet type — orangekit = Bitcoin wallet (Xverse/OKX/Unisat), otherwise EVM (MetaMask)
+  const isOrangeKit = connector?.type === 'orangekit';
+
+  // Native Bitcoin balance (Xverse users) — satoshis from Bitcoin network
+  const { btcSatoshis, btcDisplay: nativeBtcDisplay, isLoading: nativeBtcLoading } = useWalletBalances();
+  const nativeBtcAmount = btcSatoshis / 1e8;
+
+  // Mezo EVM native BTC balance (MetaMask users) — wei on chain 31611
   const { data: evmBtcBalance, isLoading: evmBtcLoading } = useBalance({
     address: address as `0x${string}` | undefined,
     chainId: MEZO_TESTNET_CHAIN_ID,
-    query: { refetchInterval: 15_000 },
+    query: { refetchInterval: 15_000, staleTime: 10_000, enabled: !isOrangeKit },
   });
-
-  // BTC wallet balances (Bitcoin network — used for display elsewhere)
-  const { btcDisplay: bitcoinNetworkDisplay } = useWalletBalances();
-
-  // Use EVM BTC balance for the deposit UI — this is what the contract receives
   const evmBtcAmount = evmBtcBalance?.value !== undefined
     ? Number(formatUnits(evmBtcBalance.value, 18))
     : 0;
   const evmBtcDisplay = evmBtcBalance?.value !== undefined
     ? Number(formatUnits(evmBtcBalance.value, 18)).toFixed(6).replace(/\.?0+$/, '')
     : '0';
-  // Keep a small reserve for gas (0.001 BTC)
-  const btcAvailable = Math.max(0, evmBtcAmount - 0.001);
+  // Only show loading spinner on first fetch, not background refetches
+  const showEvmBtcLoading = evmBtcLoading && evmBtcBalance === undefined;
+
+  // For the deposit UI: Xverse users need to bridge first (no EVM BTC yet),
+  // MetaMask users use their EVM BTC directly
+  const btcAvailable = isOrangeKit
+    ? 0 // Xverse users must bridge first — can't deposit native BTC directly
+    : Math.max(0, evmBtcAmount - 0.001); // MetaMask: reserve 0.001 for gas
+
+  const btcBalanceLoading = isOrangeKit ? nativeBtcLoading : evmBtcLoading;
 
   // Deposit (Lock BTC) contract interaction
   const { writeContract, data: depositTxHash, isPending: depositPending, reset: resetDeposit } = useWriteContract();
@@ -53,15 +65,21 @@ export default function Borrow() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (depositSuccess) {
+    if (depositSuccess && depositTxHash && address) {
+      // Record the lock transaction in the backend
+      backendClient.recordLock(address, depositTxHash, lockAmount).catch(() => {
+        // non-fatal — position will still update
+      });
       queryClient.invalidateQueries({ queryKey: keys.borrowPosition(address) });
-      setTimeout(() => { setTab('borrow'); resetDeposit(); setLockAmount(0); }, 1500);
+      queryClient.refetchQueries({ queryKey: keys.borrowHistory(address) });
+      setTimeout(() => { setTab('borrow'); resetDeposit(); setLockAmount(0); setLockInputRaw(''); }, 1500);
     }
   }, [depositSuccess]);
 
   function handleDeposit() {
-    if (!lockAmount || lockAmount <= 0) return;
-    writeContract({
+    if (!lockAmount || lockAmount <= 0 || !address) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (writeContract as any)({
       address: LENDING_CONTRACT,
       abi: DEPOSIT_ABI,
       functionName: 'deposit',
@@ -77,6 +95,7 @@ export default function Borrow() {
     chainId: MEZO_TESTNET_CHAIN_ID,
     query: {
       refetchInterval: 10_000,
+      staleTime: 8_000,
     },
   });
 
@@ -84,8 +103,12 @@ export default function Borrow() {
     ? Number(formatUnits(musdBalanceData.value, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
     : '—';
 
-  const { data: position, isLoading: positionLoading } = useBorrowPosition();
+  const { data: position, isLoading: positionLoading, isFetching: positionFetching, status: positionStatus } = useBorrowPosition();
   const { data: history = [] } = useBorrowHistory();
+
+  // Only show skeleton on the very first load — not on background refetches or navigation
+  // status === 'pending' means no cached data exists yet (true first-ever load only)
+  const showPositionSkeleton = positionStatus === 'pending';
   const borrowMutation = useBorrow();
   const repayMutation = useRepay();
 
@@ -95,6 +118,11 @@ export default function Borrow() {
   const totalBorrowable = position?.totalBorrowable ?? 0;
   const alreadyBorrowed = position?.alreadyBorrowed ?? 0;
   const available = position?.available ?? 0;
+
+  // Format BTC with up to 8 decimal places, trimming trailing zeros
+  const btcLockedDisplay = btcLocked > 0
+    ? btcLocked.toFixed(8).replace(/\.?0+$/, '')
+    : '0';
 
   const musdUnlockable = lockAmount > 0 && btcPriceUSD > 0
     ? Math.floor(lockAmount * btcPriceUSD * 0.6)
@@ -121,7 +149,7 @@ export default function Borrow() {
   }
 
   const STATS = [
-    { label: 'BTC Locked', value: `${btcLocked} BTC`, sub: `≈ $${collateralValueUSD.toLocaleString()}` },
+    { label: 'BTC Locked', value: `${btcLockedDisplay} BTC`, sub: `≈ $${collateralValueUSD.toLocaleString(undefined, { maximumFractionDigits: 2 })}` },
     { label: 'MUSD Borrowed', value: `${alreadyBorrowed.toLocaleString()}`, sub: 'of ' + totalBorrowable.toLocaleString() + ' max' },
     { label: 'Available to Borrow', value: `${available.toLocaleString()}`, sub: 'MUSD remaining' },
     { label: 'Interest Rate', value: '0%', sub: 'Forever free' },
@@ -155,7 +183,7 @@ export default function Borrow() {
       <div className="max-w-6xl mx-auto px-8 md:px-12 py-12 space-y-10">
 
         {/* ── Stats row ── */}
-        {positionLoading ? (
+        {showPositionSkeleton ? (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             {[1,2,3,4,5].map(i => <div key={i} className="h-32 rounded-3xl bg-white/5 animate-pulse" />)}
           </div>
@@ -223,141 +251,235 @@ export default function Borrow() {
             {/* ── Lock BTC tab ── */}
             {tab === 'lock' && (
               <>
-                {/* BTC balance display */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-mezo-gold/10 flex items-center justify-center shrink-0">
-                    <Bitcoin size={18} className="text-mezo-gold" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30 mb-0.5">Available BTC (Mezo EVM)</p>
-                    <p className="text-xl font-display font-black tracking-tighter text-white">
-                      {evmBtcLoading ? '...' : evmBtcDisplay} <span className="text-mezo-gold text-sm">BTC</span>
-                    </p>
-                    <p className="text-[9px] text-white/30 mt-0.5">0.001 BTC reserved for gas</p>
-                  </div>
-                </div>
+                {/* ── Xverse: Bridge required ── */}
+                {isOrangeKit && (
+                  <>
+                    {/* Native BTC balance */}
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-mezo-gold/10 flex items-center justify-center shrink-0">
+                        <Bitcoin size={18} className="text-mezo-gold" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30 mb-0.5">Your Bitcoin Balance</p>
+                        <p className="text-xl font-display font-black tracking-tighter text-white">
+                          {nativeBtcLoading ? '...' : nativeBtcDisplay} <span className="text-mezo-gold text-sm">BTC</span>
+                        </p>
+                        <p className="text-[9px] text-white/30 mt-0.5">Native Bitcoin · not yet on Mezo EVM</p>
+                      </div>
+                    </div>
 
-                {/* No BTC warning */}
-                {!evmBtcLoading && evmBtcAmount === 0 && (
-                  <div className="flex items-start gap-3 bg-mezo-gold/10 border border-mezo-gold/30 rounded-2xl p-5">
-                    <AlertTriangle size={16} className="text-mezo-gold shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-white/60 leading-relaxed">
-                      No BTC available on Mezo EVM. Get testnet BTC from <span className="text-mezo-gold">faucet.test.mezo.org</span> and add Mezo Testnet (chain 31611) to MetaMask.
-                    </p>
-                  </div>
+                    {/* Bridge step */}
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-7 h-7 rounded-full bg-mezo-gold flex items-center justify-center shrink-0 text-mezo-ink font-black text-xs">1</div>
+                        <p className="text-sm font-black text-white">Bridge BTC to Mezo</p>
+                      </div>
+                      <p className="text-[11px] text-white/50 leading-relaxed pl-10">
+                        Your Bitcoin is on the Bitcoin network. To use it as collateral on MezoShop, you need to bridge it to Mezo EVM first. This is a one-time step.
+                      </p>
+                      <a
+                        href="https://testnet.mezo.org/overview"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-10 flex items-center gap-2 w-fit bg-mezo-gold text-mezo-ink text-[10px] font-black tracking-[0.2em] uppercase px-5 py-3 rounded-xl hover:bg-white transition-colors"
+                      >
+                        Bridge on Mezo <ExternalLink size={12} />
+                      </a>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center shrink-0 text-white/40 font-black text-xs">2</div>
+                        <p className="text-sm font-black text-white/40">Come back and Lock BTC</p>
+                      </div>
+                      <p className="text-[11px] text-white/30 leading-relaxed pl-10">
+                        After bridging, your BTC will appear on Mezo EVM. Return here and lock it as collateral to start borrowing MUSD.
+                      </p>
+                      <div className="ml-10 flex items-center gap-2 text-[10px] text-white/20 font-black uppercase tracking-widest">
+                        <ArrowRight size={12} /> Then borrow MUSD · shop · repay
+                      </div>
+                    </div>
+
+                    {/* After bridge: check if they now have EVM BTC */}
+                    {nativeBtcAmount === 0 && (
+                      <div className="flex items-start gap-3 bg-mezo-gold/10 border border-mezo-gold/30 rounded-2xl p-5">
+                        <AlertTriangle size={16} className="text-mezo-gold shrink-0 mt-0.5" />
+                        <p className="text-[11px] text-white/60 leading-relaxed">
+                          No Bitcoin detected in your Xverse wallet. Make sure you're on testnet and have testnet BTC.
+                        </p>
+                      </div>
+                    )}
+                  </>
                 )}
 
-                {/* Amount input */}
-                <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
-                  <div className="flex justify-between items-center">
-                    <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Amount to Lock</p>
-                    <button
-                      onClick={() => setLockAmount(btcAvailable)}
-                      className="text-[9px] font-black tracking-widest uppercase text-mezo-gold hover:text-white transition-colors"
-                    >
-                      Max
-                    </button>
-                  </div>
-
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1">
-                      <input
-                        type="number"
-                        min={0}
-                        max={btcAvailable}
-                        step={0.001}
-                        value={lockAmount || ''}
-                        placeholder="0"
-                        onChange={e => {
-                          const val = Number(e.target.value);
-                          setLockAmount(isNaN(val) ? 0 : Math.max(0, val));
-                        }}
-                        className="w-full bg-transparent font-display text-5xl font-black text-white focus:outline-none tracking-tighter placeholder:text-white/20"
-                      />
-                      <p className="text-mezo-gold font-black text-sm mt-1">BTC</p>
+                {/* ── MetaMask: Direct deposit ── */}
+                {!isOrangeKit && (
+                  <>
+                    {/* EVM BTC balance */}
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-mezo-gold/10 flex items-center justify-center shrink-0">
+                        <Bitcoin size={18} className="text-mezo-gold" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/30 mb-0.5">Available BTC · Mezo EVM</p>
+                        <p className="text-xl font-display font-black tracking-tighter text-white">
+                          {showEvmBtcLoading ? '...' : evmBtcDisplay} <span className="text-mezo-gold text-sm">BTC</span>
+                        </p>
+                        <p className="text-[9px] text-white/30 mt-0.5">0.001 BTC reserved for gas</p>
+                      </div>
                     </div>
-                    <div className="flex flex-col gap-1 pb-6">
-                      <button
-                        onClick={() => setLockAmount(v => Math.round((v + 0.001) * 1e8) / 1e8)}
-                        className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        onClick={() => setLockAmount(v => Math.max(0, Math.round((v - 0.001) * 1e8) / 1e8))}
-                        className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Over-balance warning */}
-                {lockAmount > btcAvailable && btcAvailable > 0 && (
-                  <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
-                    <AlertTriangle size={14} className="text-red-400 shrink-0" />
-                    <p className="text-[10px] text-red-300">
-                      Exceeds available balance. Max: {btcAvailable.toFixed(6)} BTC (0.001 reserved for gas)
-                    </p>
-                  </div>
+                    {/* No EVM BTC warning — only show after confirmed first load */}
+                    {!showEvmBtcLoading && evmBtcAmount === 0 && (
+                      <div className="flex items-start gap-3 bg-mezo-gold/10 border border-mezo-gold/30 rounded-2xl p-5">
+                        <AlertTriangle size={16} className="text-mezo-gold shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-white/60 leading-relaxed">
+                            No BTC on Mezo EVM. Get testnet BTC from the faucet or bridge from Bitcoin.
+                          </p>
+                          <a
+                            href="https://faucet.test.mezo.org"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] text-mezo-gold font-black uppercase tracking-widest hover:text-white transition-colors"
+                          >
+                            Get from faucet <ExternalLink size={10} />
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Amount input */}
+                    {evmBtcAmount > 0 && (
+                      <>
+                        <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-6">
+                          <div className="flex justify-between items-center">
+                            <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Amount to Lock</p>
+                            <button
+                              onClick={() => {
+                                setLockAmount(btcAvailable);
+                                setLockInputRaw(String(btcAvailable));
+                              }}
+                              className="text-[9px] font-black tracking-widest uppercase text-mezo-gold hover:text-white transition-colors"
+                            >
+                              Max
+                            </button>
+                          </div>
+
+                          <div className="flex items-end gap-3">
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={lockInputRaw}
+                                placeholder="0"
+                                onChange={e => {
+                                  const raw = e.target.value;
+                                  // Allow empty string, digits, and a single decimal point
+                                  if (raw === '' || /^\d*\.?\d*$/.test(raw)) {
+                                    setLockInputRaw(raw);
+                                    const val = parseFloat(raw);
+                                    setLockAmount(isNaN(val) ? 0 : Math.max(0, val));
+                                  }
+                                }}
+                                className="w-full bg-transparent font-display text-5xl font-black text-white focus:outline-none tracking-tighter placeholder:text-white/20"
+                              />
+                              <p className="text-mezo-gold font-black text-sm mt-1">BTC</p>
+                            </div>
+                            <div className="flex flex-col gap-1 pb-6">
+                              <button
+                                onClick={() => {
+                                  const next = Math.min(btcAvailable, Math.round((lockAmount + 0.001) * 1e8) / 1e8);
+                                  setLockAmount(next);
+                                  setLockInputRaw(String(next));
+                                }}
+                                className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
+                              >
+                                <ChevronUp size={14} />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const next = Math.max(0, Math.round((lockAmount - 0.001) * 1e8) / 1e8);
+                                  setLockAmount(next);
+                                  setLockInputRaw(next === 0 ? '' : String(next));
+                                }}
+                                className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 transition-all"
+                              >
+                                <ChevronDown size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Over-balance warning */}
+                        {lockAmount > btcAvailable && (
+                          <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                            <AlertTriangle size={14} className="text-red-400 shrink-0" />
+                            <p className="text-[10px] text-red-300">
+                              Exceeds available balance. Max: {btcAvailable.toFixed(6)} BTC
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Preview */}
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+                          <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Preview</p>
+                          <div className="flex justify-between items-center">
+                            <p className="text-[11px] text-white/50">You will be able to borrow</p>
+                            <p className="font-black text-mezo-gold">
+                              {musdUnlockable > 0 ? musdUnlockable.toLocaleString() : '—'} MUSD
+                            </p>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <p className="text-[11px] text-white/50">At current BTC price</p>
+                            <p className="font-black text-white/70">
+                              {btcPriceUSD > 0 ? `$${btcPriceUSD.toLocaleString()}` : '—'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Lock BTC CTA */}
+                        <AnimatePresence mode="wait">
+                          {depositSuccess ? (
+                            <motion.div
+                              key="deposit-done"
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0 }}
+                              className="w-full flex items-center justify-center gap-3 bg-green-500/20 border border-green-500/30 py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase text-green-400"
+                            >
+                              <ShieldCheck size={16} />
+                              ✓ BTC Locked — switching to Borrow...
+                            </motion.div>
+                          ) : (
+                            <motion.button
+                              key="deposit-cta"
+                              onClick={handleDeposit}
+                              disabled={!address || depositPending || depositConfirming || lockAmount <= 0 || lockAmount > btcAvailable}
+                              className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40"
+                            >
+                              {depositPending || depositConfirming ? (
+                                <>
+                                  <motion.div
+                                    animate={{ rotate: 360 }}
+                                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                                    className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
+                                  />
+                                  {depositConfirming ? 'Confirming...' : 'Locking...'}
+                                </>
+                              ) : (
+                                <>
+                                  <Bitcoin size={16} />
+                                  Lock {lockAmount > 0 ? `${lockAmount} ` : ''}BTC as Collateral
+                                </>
+                              )}
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
+                      </>
+                    )}
+                  </>
                 )}
-
-                {/* Preview card */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
-                  <p className="text-[10px] font-black tracking-[0.3em] uppercase text-white/40">Preview</p>
-                  <div className="flex justify-between items-center">
-                    <p className="text-[11px] text-white/50">You will be able to borrow</p>
-                    <p className="font-black text-mezo-gold">
-                      {musdUnlockable > 0 ? musdUnlockable.toLocaleString() : '—'} MUSD
-                    </p>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <p className="text-[11px] text-white/50">At current BTC price</p>
-                    <p className="font-black text-white/70">
-                      {btcPriceUSD > 0 ? `$${btcPriceUSD.toLocaleString()}` : '—'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Lock BTC CTA */}
-                <AnimatePresence mode="wait">
-                  {depositSuccess ? (
-                    <motion.div
-                      key="deposit-done"
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="w-full flex items-center justify-center gap-3 bg-green-500/20 border border-green-500/30 py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase text-green-400"
-                    >
-                      <ShieldCheck size={16} />
-                      ✓ BTC Locked
-                    </motion.div>
-                  ) : (
-                    <motion.button
-                      key="deposit-cta"
-                      onClick={handleDeposit}
-                      disabled={!address || depositPending || depositConfirming || lockAmount <= 0 || lockAmount > btcAvailable || evmBtcAmount === 0}
-                      className="w-full flex items-center justify-center gap-3 bg-mezo-gold py-5 rounded-2xl text-[11px] font-black tracking-[0.3em] uppercase hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-mezo-gold/20 disabled:opacity-40"
-                    >
-                      {depositPending || depositConfirming ? (
-                        <>
-                          <motion.div
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                            className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full"
-                          />
-                          Locking...
-                        </>
-                      ) : (
-                        <>
-                          <Bitcoin size={16} />
-                          Lock {lockAmount > 0 ? lockAmount : ''} BTC
-                        </>
-                      )}
-                    </motion.button>
-                  )}
-                </AnimatePresence>
               </>
             )}
 
@@ -560,21 +682,43 @@ export default function Borrow() {
                 <div key={i} className="flex items-center gap-4">
                   <div className={cn(
                     'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
-                    tx.type === 'borrow' ? 'bg-mezo-gold/10' : 'bg-green-500/10'
+                    tx.type === 'borrow' ? 'bg-mezo-gold/10' :
+                    tx.type === 'lock' ? 'bg-blue-500/10' :
+                    'bg-green-500/10'
                   )}>
                     {tx.type === 'borrow'
                       ? <Bitcoin size={14} className="text-mezo-gold" />
+                      : tx.type === 'lock'
+                      ? <ShieldCheck size={14} className="text-blue-400" />
                       : <RefreshCw size={14} className="text-green-400" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-white capitalize">{tx.type}</p>
-                    <p className="text-[9px] text-white/30 uppercase tracking-widest">{tx.date}</p>
+                    <p className="text-sm font-black text-white capitalize">{tx.type === 'lock' ? 'Lock BTC' : tx.type}</p>
+                    <p className="text-[9px] text-white/30 uppercase tracking-widest">
+                      {new Date(tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </div>
                   <div className="text-right">
-                    <p className={cn('font-black text-sm', tx.type === 'borrow' ? 'text-mezo-gold' : 'text-green-400')}>
-                      {tx.type === 'borrow' ? '+' : '-'}{tx.amount.toLocaleString()} MUSD
+                    <p className={cn('font-black text-sm',
+                      tx.type === 'borrow' ? 'text-mezo-gold' :
+                      tx.type === 'lock' ? 'text-blue-400' :
+                      'text-green-400'
+                    )}>
+                      {tx.type === 'borrow' ? '+' : tx.type === 'lock' ? '' : '-'}
+                      {tx.type === 'lock'
+                        ? `${tx.amount} BTC`
+                        : `${tx.amount.toLocaleString()} MUSD`}
                     </p>
-                    <p className="text-[8px] text-white/20 uppercase tracking-widest">{tx.status}</p>
+                    {tx.txHash && (
+                      <a
+                        href={`https://explorer.test.mezo.org/tx/${tx.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[8px] text-mezo-gold/60 hover:text-mezo-gold transition-colors uppercase tracking-widest font-black"
+                      >
+                        View tx →
+                      </a>
+                    )}
                   </div>
                 </div>
               ))}
