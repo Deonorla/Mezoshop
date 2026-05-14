@@ -14,6 +14,13 @@ import WrongNetworkBanner from '@/src/components/WrongNetworkBanner';
 
 type Step = 'review' | 'confirm' | 'success';
 
+// Returns the first image matching the selected color by scanning filenames
+function getColorImage(images: string[], colors?: string[], selectedColor?: string): string | undefined {
+  if (!selectedColor || !images.length) return undefined;
+  const colorLower = selectedColor.toLowerCase().replace(/\s+/g, '_');
+  return images.find(img => img.toLowerCase().includes(colorLower));
+}
+
 const STEPS: { key: Step; label: string }[] = [
   { key: 'review', label: 'Review' },
   { key: 'confirm', label: 'Confirm' },
@@ -169,13 +176,29 @@ export default function Checkout() {
                 ) : cartItems.map(item => (
                   <div key={item.productId} className="flex gap-5 bg-white/5 border border-white/10 rounded-2xl p-5">
                     <div className="w-20 h-24 rounded-xl overflow-hidden shrink-0 border border-white/10">
-                      <img src={item.product.images[0]} alt={item.product.name} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                      <img
+                        src={getColorImage(item.product.images, item.product.colors, item.color) ?? item.product.images[0]}
+                        alt={item.product.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1 flex flex-col justify-between">
                       <div>
                         <p className="text-[9px] font-black tracking-[0.3em] uppercase text-mezo-gold mb-1">{item.product.brand}</p>
                         <p className="font-display text-lg font-black italic text-white">{item.product.name}</p>
-                        {item.size && <p className="text-[9px] text-white/30 mt-0.5">Size: {item.size}</p>}
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {item.color && (
+                            <span className="text-[9px] text-white/40 font-black uppercase tracking-widest bg-white/10 px-2 py-0.5 rounded-full">
+                              {item.color}
+                            </span>
+                          )}
+                          {item.size && (
+                            <span className="text-[9px] text-white/40 font-black uppercase tracking-widest bg-white/10 px-2 py-0.5 rounded-full">
+                              {item.size}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-between">
                         <button onClick={() => removeFromCart.mutate(item.productId)} className="text-[9px] text-white/20 hover:text-mezo-rose transition-colors uppercase tracking-widest font-black">Remove</button>
@@ -237,11 +260,20 @@ export default function Checkout() {
                 {cartItems.map(item => (
                   <div key={item.productId} className="flex items-center gap-4">
                     <div className="w-12 h-14 rounded-xl overflow-hidden shrink-0 border border-white/10">
-                      <img src={item.product.images[0]} alt={item.product.name} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                      <img
+                        src={getColorImage(item.product.images, item.product.colors, item.color) ?? item.product.images[0]}
+                        alt={item.product.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-black text-white">{item.product.name}</p>
-                      <p className="text-[9px] text-white/30 uppercase tracking-widest">{item.product.brand}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <p className="text-[9px] text-white/30 uppercase tracking-widest">{item.product.brand}</p>
+                        {item.color && <span className="text-[9px] text-white/30">· {item.color}</span>}
+                        {item.size && <span className="text-[9px] text-white/30">· {item.size}</span>}
+                      </div>
                     </div>
                     <p className="font-black text-white">{item.product.musd.toLocaleString()} MUSD</p>
                   </div>
