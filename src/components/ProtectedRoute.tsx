@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAccount, useConfig, useConnect } from 'wagmi';
+import { useAccount, useConfig, useConnect, useSwitchChain } from 'wagmi';
 import { reconnect } from 'wagmi/actions';
 import { useAuth } from '@/src/hooks/useAuth';
 import { motion } from 'motion/react';
 import Logo from '@/src/components/Logo';
+import WrongNetworkBanner from '@/src/components/WrongNetworkBanner';
+import { MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 
 const SESSION_KEY = 'mezo_session';
 const CONNECTOR_KEY = 'mezo_connector_id';
@@ -57,15 +59,33 @@ function WalletLoadingScreen() {
 }
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { status, address } = useAccount();
+  const { status, address, chainId } = useAccount();
   const { isConnected, hasOnboarded } = useAuth();
   const config = useConfig();
+  const { switchChain } = useSwitchChain();
 
   const stored = useRef(getStoredSession());
   const reconnectAttempted = useRef(false);
+  const switchAttempted = useRef(false);
 
   // Start waiting if we have a stored session
   const [waiting, setWaiting] = useState(!!stored.current.address);
+
+  // Auto-switch to Mezo testnet when wallet connects on wrong network
+  useEffect(() => {
+    if (
+      status === 'connected' &&
+      chainId !== MEZO_TESTNET_CHAIN_ID &&
+      !switchAttempted.current
+    ) {
+      switchAttempted.current = true;
+      switchChain({ chainId: MEZO_TESTNET_CHAIN_ID });
+    }
+    // Reset switch attempt flag when chain changes
+    if (chainId === MEZO_TESTNET_CHAIN_ID) {
+      switchAttempted.current = false;
+    }
+  }, [status, chainId]);
 
   // Persist session on connect — use wagmi's recentConnectorId as the
   // canonical ID since it normalises MetaMask SDK → metaMask etc.

@@ -12,6 +12,10 @@ import { router } from './router.tsx';
 import '@rainbow-me/rainbowkit/styles.css';
 import './index.css';
 
+// Wake up the backend immediately on app load to avoid cold start delays
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3002';
+fetch(`${API_URL}/health`).catch(() => {});
+
 // Eagerly call setup() only on the previously connected connector
 // so getChainId() works synchronously when RainbowKit calls it before connect().
 // Calling setup() on ALL connectors triggers wallet popups (e.g. Xverse)

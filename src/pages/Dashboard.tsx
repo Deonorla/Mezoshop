@@ -370,7 +370,7 @@ export default function Dashboard() {
                       await backendClient.addCartItem(address ?? '', { productId, quantity: 1, size, color });
                       queryClient.invalidateQueries({ queryKey: ['cart'] });
                     }}
-                    onNavigate={(productId: string) => navigate(`/products/${productId}`)}
+                    onNavigate={(productId: string) => navigate(`/product/${productId}`)}
                   />
                 ))}
               </div>

@@ -264,7 +264,7 @@ chatRouter.post("/", async (c) => {
     system: buildSystemPrompt(userContext ?? {}),
     messages: coreMessages,
     tools,
-    maxSteps: 5, // allow retries if first search returns no results
+    maxSteps: 3, // limit tool call chains to reduce latency
     onFinish: async ({ response }) => {
       // Close the StreamData so the stream can finish
       streamData.close();
