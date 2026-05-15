@@ -12,20 +12,18 @@ import { metaMaskWallet, walletConnectWallet } from '@rainbow-me/rainbowkit/wall
 import { QueryClient } from '@tanstack/react-query';
 
 const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? '';
-const isMainnet = import.meta.env.PROD;
+// Force testnet — change to 'mainnet' when ready for production
+const mezoNetwork = (import.meta.env.VITE_MEZO_NETWORK as 'mainnet' | 'testnet') ?? 'testnet';
 
 export const wagmiConfig = getConfig({
   appName: 'Mezoshop',
   walletConnectProjectId: projectId,
-  mezoNetwork: isMainnet ? 'mainnet' : 'testnet',
-  // Disable wagmi's built-in reconnect-on-mount — ProtectedRoute handles
-  // reconnection manually so only the stored connector is reconnected,
-  // preventing Xverse from opening when MetaMask is the active wallet.
+  mezoNetwork,
   reconnectOnMount: false,
   wallets: [
     {
       groupName: 'Bitcoin',
-      wallets: isMainnet
+      wallets: mezoNetwork === 'mainnet'
         ? [xverseWalletMezoMainnet, unisatWalletMezoMainnet, okxWalletMezoMainnet]
         : [xverseWalletMezoTestnet, unisatWalletMezoTestnet, okxWalletMezoTestnet],
     },

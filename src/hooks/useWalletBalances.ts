@@ -41,9 +41,10 @@ export function useWalletBalances() {
   });
 
   // ── Mezo EVM native BTC (MetaMask/EVM wallets) ────────────────────────────
+  // Don't pass chainId — let wagmi use whatever chain the wallet is on.
+  // The user must be on Mezo testnet (31611) for this to return the correct balance.
   const { data: evmBtcBalance, isLoading: evmBtcLoading } = useBalance({
     address: address as `0x${string}` | undefined,
-    chainId: MEZO_TESTNET_CHAIN_ID,
     query: {
       enabled: isConnected && !isOrangeKit,
       refetchInterval: 30_000,
@@ -61,7 +62,6 @@ export function useWalletBalances() {
   const { data: evmMusdBalance, isLoading: evmMusdLoading } = useBalance({
     address: address as `0x${string}` | undefined,
     token: MUSD_TESTNET_ADDRESS as `0x${string}`,
-    chainId: MEZO_TESTNET_CHAIN_ID,
     query: {
       enabled: isConnected && !isOrangeKit,
       refetchInterval: 15_000,
