@@ -36,10 +36,9 @@ export default function Borrow() {
   const { btcSatoshis, btcDisplay: nativeBtcDisplay, isLoading: nativeBtcLoading } = useWalletBalances();
   const nativeBtcAmount = btcSatoshis / 1e8;
 
-  // Mezo EVM native BTC balance (MetaMask users) — wei on chain 31611
+  // Mezo EVM native BTC balance (MetaMask users) — no chainId so wagmi uses connected chain
   const { data: evmBtcBalance, isLoading: evmBtcLoading } = useBalance({
     address: address as `0x${string}` | undefined,
-    chainId: MEZO_TESTNET_CHAIN_ID,
     query: { refetchInterval: 15_000, staleTime: 10_000, enabled: !isOrangeKit },
   });
   const evmBtcAmount = evmBtcBalance?.value !== undefined
@@ -92,7 +91,6 @@ export default function Borrow() {
   const { data: musdBalanceData, isLoading: musdBalanceLoading } = useBalance({
     address: address as `0x${string}` | undefined,
     token: MUSD_TESTNET_ADDRESS as `0x${string}`,
-    chainId: MEZO_TESTNET_CHAIN_ID,
     query: {
       refetchInterval: 10_000,
       staleTime: 8_000,
