@@ -196,6 +196,18 @@ export function createBackendClient(walletAddress: string) {
       }).then((res) => handleResponse<CartItem>(res));
     },
 
+    /** DELETE /api/cart — clears all cart items for the connected wallet */
+    clearCart(): Promise<void> {
+      return fetch(`${BASE_URL}/api/cart`, {
+        method: 'DELETE',
+        headers: headers(),
+      }).then(async (res) => {
+        if (!res.ok && res.status !== 204) {
+          throw new BackendError(res.status, res.statusText);
+        }
+      });
+    },
+
     /** DELETE /api/cart/:itemId — removes a specific cart item */
     removeCartItem(itemId: string): Promise<void> {
       return fetch(`${BASE_URL}/api/cart/${encodeURIComponent(itemId)}`, {
@@ -364,6 +376,10 @@ export const backendClient = {
 
   addCartItem(walletAddress: string, input: AddCartItemInput): Promise<CartItem> {
     return createBackendClient(walletAddress).addCartItem(input);
+  },
+
+  clearCart(walletAddress: string): Promise<void> {
+    return createBackendClient(walletAddress).clearCart();
   },
 
   removeCartItem(walletAddress: string, itemId: string): Promise<void> {

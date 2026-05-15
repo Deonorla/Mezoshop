@@ -1,34 +1,12 @@
 import { motion } from 'motion/react';
-import { Package, Truck, CheckCircle2, ArrowLeft, MoreVertical, CreditCard, Wallet, RotateCcw } from 'lucide-react';
+import { Package, ArrowLeft, ExternalLink, Bitcoin, CheckCircle2, Clock } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useBackendOrders } from '@/src/hooks/queries';
+import { PRODUCTS, getProduct } from '@/src/lib/products';
 import type { Order } from '@/src/lib/backendClient';
 
-// ─── Display type ─────────────────────────────────────────────────────────────
-
-interface DisplayOrder {
-  id: string;
-  item: string;
-  status: string;
-  date: string;
-  cost: string;
-  type: string;
-  img: string;
-  txHash: string;
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const PLACEHOLDER_IMG = 'https://images.unsplash.com/photo-1543163521-1bf539c55dd2?q=80&w=300&auto=format&fit=crop';
-
-function mapStatus(status: Order['status']): string {
-  switch (status) {
-    case 'confirmed': return 'Delivered';
-    case 'pending':   return 'Processing';
-    default:          return 'Processing';
-  }
-}
 
 function formatDate(isoString: string): string {
   try {
@@ -42,202 +20,216 @@ function formatDate(isoString: string): string {
   }
 }
 
-function toDisplayOrder(order: Order): DisplayOrder {
-  return {
-    id: `#${order.id.slice(0, 8).toUpperCase()}`,
-    item: order.items[0]?.productId ?? 'Order',
-    status: mapStatus(order.status),
-    date: formatDate(order.createdAt),
-    cost: `${order.totalMusd.toLocaleString()} MUSD`,
-    type: 'MUSD Purchase',
-    img: PLACEHOLDER_IMG,
-    txHash: order.txHash,
-  };
+function getColorImage(images: string[], selectedColor?: string): string {
+  if (!selectedColor || !images.length) return images[0] ?? '';
+  const colorLower = selectedColor.toLowerCase().replace(/\s+/g, '_');
+  return images.find(img => img.toLowerCase().includes(colorLower)) ?? images[0];
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Order Item Card ──────────────────────────────────────────────────────────
+
+interface OrderItemRowProps {
+  productId: string;
+  quantity: number;
+  priceMusd: number;
+  color?: string;
+  size?: string;
+}
+
+function OrderItemRow({ productId, quantity, priceMusd, color, size }: OrderItemRowProps) {
+  const product = getProduct(Number(productId));
+  if (!product) return null;
+
+  const image = getColorImage(product.images, color);
+
+  return (
+    <div className="flex items-center gap-4">
+      <div className="w-14 h-16 rounded-xl overflow-hidden shrink-0 bg-mezo-cream-dark border border-mezo-ink/5">
+        <img src={image} alt={product.name} className="w-full h-full object-cover" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-black text-mezo-ink truncate">{product.name}</p>
+        <p className="text-[9px] font-black tracking-[0.2em] uppercase text-mezo-gold mb-0.5">{product.brand}</p>
+        <div className="flex items-center gap-1.5">
+          {color && (
+            <span className="text-[8px] font-black uppercase tracking-widest bg-mezo-ink/5 text-mezo-ink/50 px-2 py-0.5 rounded-full">
+              {color}
+            </span>
+          )}
+          {size && (
+            <span className="text-[8px] font-black uppercase tracking-widest bg-mezo-ink/5 text-mezo-ink/50 px-2 py-0.5 rounded-full">
+              {size}
+            </span>
+          )}
+          {quantity > 1 && (
+            <span className="text-[8px] font-black uppercase tracking-widest text-mezo-ink/30">
+              ×{quantity}
+            </span>
+          )}
+        </div>
+      </div>
+      <p className="text-sm font-black text-mezo-ink shrink-0">{priceMusd.toLocaleString()} MUSD</p>
+    </div>
+  );
+}
+
+// ─── Order Card ───────────────────────────────────────────────────────────────
+
+function OrderCard({ order, index }: { order: Order; index: number }) {
+  const isConfirmed = order.status === 'confirmed';
+  const firstItem = order.items[0];
+  const firstProduct = firstItem ? getProduct(Number(firstItem.productId)) : null;
+
+  // Get the color from the cart item if stored (items may have color field)
+  const firstItemColor = (firstItem as { color?: string })?.color;
+  const heroImage = firstProduct
+    ? getColorImage(firstProduct.images, firstItemColor)
+    : null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.08 }}
+      className="bg-white rounded-2xl border border-mezo-ink/5 overflow-hidden shadow-sm hover:shadow-lg transition-shadow"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-mezo-ink/5">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            'w-8 h-8 rounded-full flex items-center justify-center',
+            isConfirmed ? 'bg-green-100' : 'bg-mezo-gold/10'
+          )}>
+            {isConfirmed
+              ? <CheckCircle2 size={16} className="text-green-600" />
+              : <Clock size={16} className="text-mezo-gold" />}
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-mezo-ink/40">
+              Order #{order.id.slice(0, 8).toUpperCase()}
+            </p>
+            <p className={cn(
+              'text-[9px] font-black uppercase tracking-widest',
+              isConfirmed ? 'text-green-600' : 'text-mezo-gold'
+            )}>
+              {isConfirmed ? 'Confirmed' : 'Processing'}
+            </p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-[9px] text-mezo-ink/30 font-black uppercase tracking-widest">{formatDate(order.createdAt)}</p>
+          <p className="text-sm font-black text-mezo-ink">{order.totalMusd.toLocaleString()} MUSD</p>
+        </div>
+      </div>
+
+      <div className="p-6 space-y-4">
+        {/* Hero image + items */}
+        <div className="flex gap-4">
+          {/* Hero image */}
+          {heroImage && (
+            <div className="w-24 h-28 rounded-xl overflow-hidden shrink-0 bg-mezo-cream-dark border border-mezo-ink/5">
+              <img src={heroImage} alt={firstProduct?.name} className="w-full h-full object-cover" />
+            </div>
+          )}
+
+          {/* Items list */}
+          <div className="flex-1 space-y-3">
+            {order.items.map((item, i) => (
+              <OrderItemRow
+                key={i}
+                productId={item.productId}
+                quantity={item.quantity}
+                priceMusd={item.priceMusd}
+                color={(item as { color?: string }).color}
+                size={(item as { size?: string }).size}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-4 border-t border-mezo-ink/5">
+          <div className="flex items-center gap-2">
+            <Bitcoin size={12} className="text-mezo-gold" />
+            <span className="text-[9px] font-black uppercase tracking-widest text-mezo-ink/40">
+              Paid with MUSD on Mezo
+            </span>
+          </div>
+          {order.txHash && (
+            <a
+              href={`https://explorer.test.mezo.org/tx/${order.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-mezo-gold hover:text-mezo-ink transition-colors"
+            >
+              View on chain <ExternalLink size={10} />
+            </a>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Orders() {
   const { navigate } = useAppNavigation();
-  const { data: backendOrders = [], isLoading } = useBackendOrders();
-
-  const orders: DisplayOrder[] = backendOrders.map(toDisplayOrder);
+  const { data: orders = [], isLoading } = useBackendOrders();
 
   return (
-    <div className="min-h-screen bg-mezo-bg font-sans selection:bg-mezo-rose/20">
+    <div className="min-h-screen bg-mezo-bg font-sans">
       {/* Header */}
-      <header className="px-12 py-10 flex justify-between items-center border-b border-mezo-ink/5 sticky top-0 bg-mezo-bg/80 backdrop-blur-xl z-50">
-        <div className="flex items-center gap-8">
-          <button onClick={() => navigate('/dashboard')} className="p-3 hover:bg-mezo-ink/5 rounded-full transition-colors group">
+      <header className="px-8 md:px-12 py-8 flex items-center justify-between border-b border-mezo-ink/5 sticky top-0 bg-mezo-bg/80 backdrop-blur-xl z-50">
+        <div className="flex items-center gap-6">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="p-2.5 hover:bg-mezo-ink/5 rounded-full transition-colors group"
+          >
             <ArrowLeft className="text-mezo-ink/40 group-hover:text-mezo-ink transition-colors" size={20} />
           </button>
           <div>
-            <h1 className="font-display text-2xl font-black tracking-tighter italic text-mezo-ink">Your Acquisitions</h1>
-            <p className="text-[10px] uppercase font-black tracking-[0.2em] text-mezo-gold mt-1">Order History & Physical Tracking</p>
+            <h1 className="font-display text-2xl font-black tracking-tighter italic text-mezo-ink">My Orders</h1>
+            <p className="text-[10px] uppercase font-black tracking-[0.2em] text-mezo-gold mt-0.5">
+              {orders.length} {orders.length === 1 ? 'order' : 'orders'} · paid with MUSD
+            </p>
           </div>
         </div>
-        <div className="flex gap-4">
-          <div className="flex items-center gap-4 bg-white px-6 py-3 rounded-xl border border-mezo-ink/5 shadow-sm">
-             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-             <span className="text-[9px] font-black uppercase tracking-widest text-mezo-ink">
-               {orders.filter(o => o.status === 'Processing').length} Active
-             </span>
-          </div>
+        <div className="flex items-center gap-3 px-4 py-2 bg-white border border-mezo-ink/5 rounded-full shadow-sm">
+          <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          <span className="text-[9px] font-black uppercase tracking-widest text-mezo-ink/50">
+            {orders.filter(o => o.status === 'pending').length} processing
+          </span>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-12 py-16 grid lg:grid-cols-3 gap-16">
-        {/* Left Column: Active Orders */}
-        <div className="lg:col-span-2 space-y-12">
-          <div className="flex justify-between items-baseline">
-            <h2 className="font-display text-4xl font-black tracking-tighter italic text-mezo-ink uppercase">Acquisitions</h2>
-            <div className="flex gap-8 text-[10px] font-black uppercase tracking-widest text-mezo-ink/20">
-              <span className="text-mezo-ink cursor-pointer decoration-2 underline underline-offset-8 decoration-mezo-rose">Active</span>
-              <span className="hover:text-mezo-ink cursor-pointer transition-colors underline-offset-8">Archive</span>
-            </div>
+      <main className="max-w-3xl mx-auto px-8 md:px-12 py-10 space-y-6">
+        {isLoading ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-48 rounded-2xl bg-white/50 animate-pulse" />
+            ))}
           </div>
-
-          {isLoading ? (
-            <div className="space-y-6">
-              {[1, 2].map(i => (
-                <div key={i} className="h-64 rounded-3xl bg-white/50 animate-pulse" />
-              ))}
-            </div>
-          ) : orders.length === 0 ? (
-            <div className="text-center py-24">
-              <Package size={48} className="mx-auto text-mezo-ink/10 mb-4" />
-              <p className="text-mezo-ink/30 font-black uppercase tracking-widest text-sm">No orders yet</p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {orders.map((order, i) => (
-                <motion.div 
-                  key={order.id}
-                  initial={{ x: -20, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                  transition={{ delay: i * 0.1 }}
-                  className="bg-white rounded-3xl border border-mezo-ink/5 p-8 flex flex-col md:flex-row gap-10 hover:shadow-2xl hover:shadow-mezo-ink/5 transition-all group overflow-hidden relative"
-                >
-                  {/* Abstract Number Background */}
-                  <span className="absolute -right-4 -bottom-8 text-[12rem] font-display font-black text-mezo-ink/2 pointer-events-none select-none">{i + 1}</span>
-                  
-                  <div className="w-full md:w-48 aspect-3/4 rounded-2xl overflow-hidden shrink-0 bg-mezo-cream-dark shadow-inner">
-                    <img src={order.img} alt={order.item} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" referrerPolicy="no-referrer" />
-                  </div>
-
-                  <div className="flex-1 space-y-8 relative z-10">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-[10px] font-black uppercase tracking-widest text-mezo-gold mb-1 block italic">{order.id}</span>
-                        <h3 className="font-display text-2xl font-black tracking-tighter text-mezo-ink italic">{order.item}</h3>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {order.txHash && (
-                          <a
-                            href={`https://explorer.test.mezo.org/tx/${order.txHash}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[9px] font-black uppercase tracking-widest text-mezo-gold hover:text-mezo-ink transition-colors border border-mezo-gold/30 px-3 py-1.5 rounded-lg hover:bg-mezo-gold/10"
-                          >
-                            View Tx →
-                          </a>
-                        )}
-                        <button className="p-2 text-mezo-ink/20 hover:text-mezo-ink transition-colors"><MoreVertical size={20} /></button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-8">
-                      <div>
-                        <p className="text-[8px] font-black uppercase tracking-[0.2em] text-mezo-ink/30 mb-2">Order Type</p>
-                        <div className="flex items-center gap-2">
-                          <div className="p-2 bg-mezo-cream-light rounded-lg"><RotateCcw size={14} className="text-mezo-ink/60" /></div>
-                          <span className="text-xs font-black uppercase tracking-tight text-mezo-ink">{order.type}</span>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-[8px] font-black uppercase tracking-[0.2em] text-mezo-ink/30 mb-2">Contribution</p>
-                        <div className="flex items-center gap-2">
-                          <div className="p-2 bg-mezo-cream-light rounded-lg"><CreditCard size={14} className="text-mezo-ink/60" /></div>
-                          <span className="text-xs font-black uppercase tracking-tight text-mezo-ink font-mono">{order.cost}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-6 border-t border-mezo-ink/5">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className={cn("p-2 rounded-full", 
-                            order.status === 'Processing' ? "bg-mezo-gold/10 text-mezo-gold" : "bg-green-100 text-green-600"
-                          )}>
-                            {order.status === 'Processing' ? <Truck size={16} /> : <CheckCircle2 size={16} />}
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-mezo-ink">{order.status}</span>
-                        </div>
-                        <span className="text-[9px] font-bold text-mezo-ink/40 uppercase tracking-widest italic">{order.date}</span>
-                      </div>
-                      {/* Progress Bar */}
-                      <div className="h-1.5 w-full bg-mezo-cream-dark rounded-full overflow-hidden">
-                        <motion.div 
-                          initial={{ width: 0 }}
-                          animate={{ width: order.status === 'Processing' ? '35%' : '100%' }}
-                          transition={{ duration: 1.5, ease: "circOut" }}
-                          className={cn("h-full rounded-full shadow-sm", order.status === 'Processing' ? "bg-mezo-gold" : "bg-green-500")}
-                        ></motion.div>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right Column: Summaries */}
-        <div className="space-y-12">
-          <div className="bg-mezo-ink text-white p-10 rounded-[3rem] space-y-12 shadow-3xl shadow-mezo-ink/20 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-mezo-gold/10 blur-[80px] group-hover:scale-150 transition-transform duration-1000"></div>
-            
-            <div className="space-y-4 relative z-10">
-              <Package size={32} className="text-mezo-gold mb-6" />
-              <h4 className="font-display text-4xl font-black tracking-tighter italic leading-none">Sustainability <br/><span className="text-mezo-rose">Impact</span></h4>
-              <p className="text-[10px] text-white/40 leading-relaxed font-sans tracking-wide">Every acquisition contributes to our 'Circular Future' initiative. Your current borrowing streak has saved 42kg of CO2.</p>
-            </div>
-
-            <div className="space-y-8 relative z-10 pt-8 border-t border-white/5">
-              <div className="flex justify-between items-end">
-                <span className="text-[8rem] font-display font-black leading-none text-mezo-rose/20 select-none -mb-4">42</span>
-                <div className="text-right pb-4">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">KG OF CO2 SAVED</p>
-                  <p className="text-[8px] font-bold text-mezo-gold uppercase tracking-[0.2em] mt-2">Elite Contributor Level</p>
-                </div>
-              </div>
-              <button className="w-full py-5 bg-white/5 border border-white/10 rounded-2xl text-[10px] uppercase font-black tracking-widest hover:bg-white hover:text-mezo-ink transition-all shadow-xl shadow-black/20 italic">View Full Report</button>
-            </div>
-          </div>
-
-          {/* Payment Methods */}
-          <div className="bg-white p-10 rounded-[3rem] border border-mezo-ink/5 space-y-8 shadow-sm">
-            <h5 className="text-[10px] font-black uppercase tracking-widest text-mezo-ink">Connected Capital</h5>
-            <div className="space-y-4">
-              {[
-                { icon: <Wallet size={16} />, name: "Mezo Passport", detail: "Connected", color: "bg-purple-100 text-purple-600" },
-                { icon: <CreditCard size={16} />, name: "MUSD Token", detail: "On-chain", color: "bg-neutral-100 text-neutral-600" }
-              ].map((m, i) => (
-                <div key={i} className="flex items-center gap-4 p-4 hover:bg-mezo-bg rounded-2xl transition-colors cursor-pointer group border border-transparent hover:border-mezo-ink/5">
-                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-110", m.color)}>
-                    {m.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-black uppercase tracking-tight text-mezo-ink truncate italic">{m.name}</p>
-                    <p className="text-[8px] font-bold text-mezo-ink/30 uppercase mt-0.5 tracking-widest font-mono truncate">{m.detail}</p>
-                  </div>
-                  <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                </div>
-              ))}
-              <button className="w-full py-4 border-2 border-dashed border-mezo-ink/10 rounded-2xl text-[9px] uppercase font-black tracking-widest text-mezo-ink/20 hover:border-mezo-gold hover:text-mezo-gold transition-all mt-4">+ ADD METHOD</button>
-            </div>
-          </div>
-        </div>
+        ) : orders.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-center py-24 space-y-4"
+          >
+            <Package size={48} className="mx-auto text-mezo-ink/10" />
+            <p className="text-mezo-ink/30 font-black uppercase tracking-widest text-sm">No orders yet</p>
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="text-[10px] font-black uppercase tracking-widest text-mezo-gold hover:text-mezo-ink transition-colors"
+            >
+              Start shopping →
+            </button>
+          </motion.div>
+        ) : (
+          orders.map((order, i) => (
+            <OrderCard key={order.id} order={order} index={i} />
+          ))
+        )}
       </main>
     </div>
   );

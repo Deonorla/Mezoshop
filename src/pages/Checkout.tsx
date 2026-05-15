@@ -6,9 +6,10 @@ import { formatUnits } from 'viem';
 import { cn } from '@/src/lib/utils';
 import { MEZO_TESTNET_CHAIN_ID } from '@/src/lib/musd';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
-import { useCart, useRemoveFromCart } from '@/src/hooks/queries';
+import { useCart, useRemoveFromCart, keys } from '@/src/hooks/queries';
 import { useMUSDBalance } from '@/src/hooks/useMUSDBalance';
 import { useMUSDCheckout, InsufficientBalanceError } from '@/src/hooks/useMUSDCheckout';
+import { useQueryClient } from '@tanstack/react-query';
 import type { CartItem as BackendCartItem } from '@/src/lib/backendClient';
 import WrongNetworkBanner from '@/src/components/WrongNetworkBanner';
 
@@ -38,6 +39,7 @@ export default function Checkout() {
 
   const { address, chainId } = useAccount();
   const isWrongNetwork = chainId !== MEZO_TESTNET_CHAIN_ID;
+  const qc = useQueryClient();
 
   const { data: cartItems = [], isLoading: cartLoading } = useCart();
   const removeFromCart = useRemoveFromCart();
@@ -70,6 +72,11 @@ export default function Checkout() {
       const result = await checkout(backendItems, total);
       setTxHash(result.txHash);
       setOrderId(result.orderId);
+
+      // Invalidate cart so the count badge and cart page update immediately
+      qc.invalidateQueries({ queryKey: keys.cart() });
+      // Also invalidate orders so the orders page shows the new order
+      qc.invalidateQueries({ queryKey: keys.orders(address) });
 
       // Check if there was an order recording warning (error contains txHash)
       if (checkoutError && checkoutError.includes(result.txHash)) {

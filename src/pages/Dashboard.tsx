@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Compass, ShoppingBag, User, Plus, MessageSquare, Sparkles, Send, Mic, Image as ImageIcon, Bitcoin, ShoppingCart } from 'lucide-react';
+import { Search, Compass, ShoppingBag, User, Plus, MessageSquare, Sparkles, Send, Mic, Image as ImageIcon, Bitcoin, ShoppingCart, Package } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useAppNavigation } from '@/src/hooks/useAppNavigation';
 import { useCart } from '@/src/hooks/queries';
@@ -284,6 +284,7 @@ export default function Dashboard() {
       label: 'My Cart',
       page: 'checkout',
     },
+    { icon: <Package size={18} />, label: 'My Orders', page: 'orders' },
     { icon: <Bitcoin size={18} />, label: 'Borrow MUSD', page: 'borrow' },
   ];
 
@@ -427,7 +428,7 @@ export default function Dashboard() {
         {/* Header */}
         <header className="h-20 px-12 flex items-center justify-between border-b border-mezo-ink/5 bg-white/50 backdrop-blur-md sticky top-0 z-10">
           <div className="flex items-center gap-6">
-            <span className="font-display font-black text-xl italic text-mezo-gold">Bitcoin Stylist</span>
+            <span className="font-display font-black text-xl italic text-mezo-gold">Ai Stylist</span>
             <div className="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
               <span className="text-[8px] font-black uppercase text-green-700 tracking-widest">Online</span>
@@ -519,22 +520,22 @@ export default function Dashboard() {
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-3xl px-8 z-20">
           <form onSubmit={handleSubmit}>
             <div className="bg-white p-2 md:p-3 rounded-2xl shadow-xl shadow-mezo-ink/10 border border-mezo-ink/5 backdrop-blur-2xl flex items-center gap-2 md:gap-3">
-              <button type="button" className="w-10 h-10 rounded-full border border-mezo-ink/5 flex items-center justify-center text-mezo-ink/40 hover:bg-mezo-bg hover:text-mezo-ink transition-all shrink-0">
+              {/* <button type="button" className="w-10 h-10 rounded-full border border-mezo-ink/5 flex items-center justify-center text-mezo-ink/40 hover:bg-mezo-bg hover:text-mezo-ink transition-all shrink-0">
                 <Plus size={18} />
-              </button>
+              </button> */}
               <div className="flex-1 flex items-center gap-3 bg-mezo-bg/50 px-5 py-1 rounded-full border border-mezo-ink/5">
                 <Search className="text-mezo-ink/20 shrink-0" size={16} />
                 <input
                   type="text"
-                  placeholder="Ask your Bitcoin stylist..."
+                  placeholder="Ask your Ai stylist..."
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   className="flex-1 bg-transparent py-3.5 text-sm focus:outline-none placeholder:text-mezo-ink/20"
                 />
-                <div className="hidden md:flex gap-3 text-mezo-ink/20">
+                {/* <div className="hidden md:flex gap-3 text-mezo-ink/20">
                   <ImageIcon size={16} className="cursor-pointer hover:text-mezo-ink transition-colors" />
                   <Mic size={16} className="cursor-pointer hover:text-mezo-ink transition-colors" />
-                </div>
+                </div> */}
               </div>
               <button
                 type="submit"

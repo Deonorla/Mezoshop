@@ -33,6 +33,13 @@ cartRouter.post("/", async (c) => {
   return c.json(item, 201)
 })
 
+// DELETE / — clear all cart items for the authenticated wallet
+cartRouter.delete("/", async (c) => {
+  const walletAddress = c.get("walletAddress")
+  await cartService.clear(walletAddress)
+  return new Response(null, { status: 204 })
+})
+
 // DELETE /:itemId — remove an item from the cart
 cartRouter.delete("/:itemId", async (c) => {
   const walletAddress = c.get("walletAddress")

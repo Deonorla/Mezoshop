@@ -111,13 +111,13 @@ export function useMUSDCheckout(): UseMUSDCheckoutReturn {
           throw new Error(`Transaction failed with status: ${receipt.status}`);
         }
 
-        // 5. Record order in backend
+        // 5. Record order in backend — include price, color, size per item
         const orderItems: OrderItem[] = cartItems.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
-          // priceMusd is not on CartItem directly; use 0 as placeholder
-          // (the backend stores what we send; the actual price is in the product catalog)
-          priceMusd: 0,
+          priceMusd: item.priceMusd ?? 0,
+          ...(item.color ? { color: item.color } : {}),
+          ...(item.size ? { size: item.size } : {}),
         }));
 
         let orderId: string;
@@ -132,17 +132,18 @@ export function useMUSDCheckout(): UseMUSDCheckoutReturn {
           });
           orderId = order.id;
         } catch (orderErr) {
-          // 5xx error: warn but still clear cart (Requirement 5.9)
           orderRecordingFailed = true;
           orderId = '';
           const warnMsg = `Order recording failed — your payment went through. Save your tx hash: ${txHash}`;
           setError(warnMsg);
         }
 
-        // 6. Clear cart — DELETE each item individually
-        await Promise.allSettled(
-          cartItems.map((item) => backendClient.removeCartItem(address, item.id)),
-        );
+        // 6. Clear entire cart in one request
+        try {
+          await backendClient.clearCart(address);
+        } catch {
+          // non-fatal — cart will be stale but payment succeeded
+        }
 
         if (orderRecordingFailed) {
           // Return a partial result so the caller can show the txHash warning
