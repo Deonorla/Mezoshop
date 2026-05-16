@@ -22,10 +22,21 @@ export interface QuickPromptContext {
 }
 
 export function generateQuickPrompts(ctx: QuickPromptContext): [string, string, string, string] {
-  const slot0 = ctx.aesthetic ? `Find me ${ctx.aesthetic} pieces` : 'Find me a luxury coat';
-  const slot1 = ctx.shopFor ? `Best ${ctx.shopFor} looks this season` : 'Show me designer bags';
-  const slot2 = ctx.musdBalance ? `What can I get for ${ctx.musdBalance} MUSD?` : 'Best watches under 15k MUSD';
-  const slot3 = 'New runway drops';
+  // Catalog-aware prompts — specific to what MezoShop actually carries
+  const slot0 = ctx.aesthetic
+    ? `Show me ${ctx.aesthetic} tops and shirts`
+    : 'Show me printed shirts and tees';
+
+  const slot1 = ctx.shopFor
+    ? `Best ${ctx.shopFor} bottoms this season`
+    : 'Find me jeans or sweatpants under 50 MUSD';
+
+  const slot2 = ctx.musdBalance
+    ? `What coats or bags can I get for ${ctx.musdBalance} MUSD?`
+    : 'Show me bags and coats under 100 MUSD';
+
+  const slot3 = 'Find me shoes — sneakers or casual';
+
   return [slot0, slot1, slot2, slot3];
 }
 
